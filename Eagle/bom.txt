@@ -1,18 +1,27 @@
 ESP-07        (eBay)
-OLED          0.96" I2C (eBay)
-Flash button: 4x2mm SMD (eBay)
-DS18B20:      eBay
+OLED         0.96" I2C (eBay)
+Flash btn    4x2mm SMD (eBay)
+DS18B20      eBay
 
-2 Buttons:   KSA0M211-LFT
-Button caps: BTNK0190 (90=black)
-Transducer:  CST-931AP
-D1:	 SOD-323 General Purpose
-R1-R3:	10K 0803
-R4:	0805 depends on ADC need
-R5:	1K 0805
-R6:	10K Pullup for GPIO16 (not used for DS18B20)
-C1:	0.1uF 0808
-Q1:	P-Channel SOT-23 (1A+) A PNP probably won't supply 3.3V
-Q2:	N-Channel SOT-23 (1A) An NPN would be quieter.
-Prog header, 3 bottom connectors: 0.1" header, 13 pins.
+2 Buttons   KSA0M211-LFT
+Button caps BTNK0190 (90=black)
+Transducer  CST-931AP
+D1:         SOD-323 General Purpose
+R1-R3:      10K 0803
+R4:         0805 depends on ADC need
+R5:         1K 0805
+R6:         10K Pullup for GPIO16 (not used for DS18B20)
+C1:         0.1uF 0808
+Q1:         P-Channel SOT-23 (1A+) A PNP probably won't supply 3.3V
+Q2:         N-Channel SOT-23 (1A) An NPN would be quieter.
+Headers     0.1" header, 16 pins.
+
 All 3 bottom connectors are servo cables. +center.  eBay is a good source.
+
+Slave/Supply board:
+
+Supply    RAC02-3.3SC
+SSR       CX240D5
+330uF     6SEQP330M
+IEC       161-0714-7-E
+PPTC      PTS181224V150
