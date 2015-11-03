@@ -1,7 +1,9 @@
 # WiFi Smart Waterbed Heater
 Why do I keep making thermostats?  This is an off-shoot of the ESP07_Multi ESP8266 project for use as a thermostat control with OLED display, 2 buttons and sound transducer.  To use as a cooling thermostat, just modify the tempCheck function to switch on at high temp crossover.  
 
-Version 0 has 3 I/Os on the bottom back for 3V3 power in and control of a SSR, an ADC input for thermistor or water sensor (which I decided not to use), and power/digital in for DS18B20 probe.  Rev 1 has an extra pad for 3V3 on the ADC input, so all 3 connectors are 3-pin, servo-style with + in the center.  Adruino code will be posted soon.   
+There are 3 servo style I/Os on the bottom back. 1: Power in + SSR control. 2: ADC + 3V3 for thermistor, water sensor etc. 3: Digital for DS18B20 probe or other acc.  Rev 1 + PIC will actually be used.  Since the ESP easily resets or freezes it isn't safe enough for this project and PWM is a pain, the 10F320 will be used to control the heater by listening to a heartbeat as well as handling PWM for the speaker.  
+
+Adruino code will be posted soon.   
 
 ![Prototype](http://www.curioustech.net/images/waterbed.png)
 
