@@ -10,10 +10,15 @@ D1:         SOD-323 General Purpose
 R1-R3:      10K 0803
 R4:         0805 depends on ADC need
 R5:         1K 0805
-R6:         10K Pullup for GPIO16 (not used for DS18B20)
-C1:         0.1uF 0808
-Q1:         P-Channel SOT-23 (1A+) A PNP probably won't supply 3.3V
-Q2:         N-Channel SOT-23 (1A) An NPN would be quieter.
+R6:         4K7 0805 (for 1-Wire use)
+R7:         330 0805 (for LED optional)
+R8:         1K 0805
+R9:         10K Pullup for GPIO16
+C1-C3:      0.1uF 16V 0805
+Q1:         P-Channel SOT-23 (PMV33UPE,215) A PNP probably won't supply 3.3V
+Q2:         NPN SOT-23
+10F320      10F320
+LED         0805 (optional)
 Headers     0.1" header, 16 pins.
 
 All 3 bottom connectors are servo cables. +center.  eBay is a good source.
