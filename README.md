@@ -10,3 +10,6 @@ Adruino code will be posted soon.
 Display and web interface below.  It currently has a day / night setting for automatic efficiency.  Logging to chart the power usage and temperature changes.  As well as web remote control and global access for vacation adjustment.
 
 ![Control](http://curioustech.net/images/waterbedui.png)
+
+
+![Slave](http://curioustech.net/images/wb_slave.png)
