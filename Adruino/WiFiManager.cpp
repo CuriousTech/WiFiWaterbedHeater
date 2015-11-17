@@ -135,7 +135,7 @@ boolean WiFiManager::hasConnected(void)
     if (WiFi.status() == WL_CONNECTED)
       return true;
     delay(200);
-    DEBUG_PRINT(".");
+    Serial.print(".");
     display.clear();
     display.drawXbm(34,10, 60, 36, WiFi_Logo_bits);
     display.setColor(INVERSE);
@@ -409,6 +409,7 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
           drawSpinner(4, n % 4);
           display.display();
         }
+        Serial.println("");
         if(WiFi.status() == WL_CONNECTED)
         {
           Serial.println("Connected");
