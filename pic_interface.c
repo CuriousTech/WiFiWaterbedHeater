@@ -21,7 +21,7 @@ SOFTWARE.
 */
 
 // PIC10F320 Interface for WiFi Waterbed heater safety control and PWM buzzer output
-// Rev.0
+// Rev.1
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,10 +41,10 @@ SOFTWARE.
 #pragma config BORV = LO        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), low trip point selected.)
 #pragma config WRT = OFF        // Flash Memory Self-Write Protection (Write protection off)
 
-#define PWM_OUT     LATAbits.LATA0
-#define HEAT_OUT    LATAbits.LATA1	// Heater
-#define HEAT_IN     PORTAbits.RA2
-#define BUZZ        PORTAbits.RA3  // BUZZ from ESP
+#define PWM_OUT  LATAbits.LATA0
+#define HEAT_OUT LATAbits.LATA1	// Heater
+#define HEAT_IN PORTAbits.RA2
+#define BUZZ PORTAbits.RA3  // BUZZ from ESP
 
 void alarm(void);
 
@@ -57,7 +57,7 @@ void interrupt isr(void)
 	if(IOCAFbits.IOCAF2)	// HEAT_IN
 	{
 		IOCAFbits.IOCAF2 = 0;
-		if(HEAT_IN)
+		if(HEAT_IN == 0)
 			HEAT_OUT = 0;	// low = on
 		timer = 3;			// 3 second timeout
 	}
@@ -113,20 +113,21 @@ void main(void)
 
 void alarm()
 {
-	OSCCONbits.IRCF = 0b011;   // 500KHz
+	OSCCONbits.IRCF = 0b011;	// 500KHz
 #undef _XTAL_FREQ
 #define _XTAL_FREQ 500000
 
-	PWM1CON = 0b11000000;   //Enable PWM Module, Module Output
+	PWM1CON = 0b11000000	//Enable PWM Module, Module Output
 
 	PIR1bits.TMR2IF = 0;	//Clear the timer 2 interrupt flag 
 	T2CON = 0b00000100;		//Turn TMR2 on, fastest re/post scale
 	PWM1DCL = 100;
+
 	PWM1DCH = 80;
 	PR2 = 114;
 	__delay_ms(30);
 
-	PWM1CON = 0;   //clear PWM
+	PWM1CON = 0		//clear PWM
 	T2CON = 0;		//turn off timer
 	OSCCONbits.IRCF = 0b000;   // 31KHz
 }
