@@ -98,7 +98,7 @@ bool lbState[2];
 long debounce[2];
 long lRepeatMillis;
 int currentTemp = 99;
-int heater = LOW;
+bool bHeater = false;
 bool bNeedUpdate = true;
 int logCounter;
 
@@ -164,6 +164,18 @@ void handleRoot() // Main webpage interface
       case 'O': // OLED
           bDisplay_on = s.toInt() ? true:false;
           break;
+      case 'B':   // for PIC programming
+          if(s.toInt())
+          {
+              pinMode(HEAT, OUTPUT);
+              pinMode(BUZZ, OUTPUT);
+          }
+          else
+          {
+              pinMode(HEAT, INPUT);
+              pinMode(BUZZ, INPUT);
+          }
+          break;
     }
   }
 
@@ -179,8 +191,7 @@ void handleRoot() // Main webpage interface
       nWrongPass <<= 1;
     if(ip.l != lastIP.l)  // if different IP drop it down
        nWrongPass = 4;
-    lastIP.l = ip.l;
-    ctSendLog(ip.l); // log attempts
+    ctSendIP(ip.l); // log attempts
   }
   lastIP.l = ip.l;
 
@@ -198,7 +209,7 @@ void handleRoot() // Main webpage interface
   page += "<p>" + timeFmt(true, true, true);
   page += " &nbsp&nbsp&nbsp&nbsp ";
   page += currentTemp / 10; page += "."; page += currentTemp % 10;  page += "&degF ";
-  page += heater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
+  page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
   page += "</p>";
   
   page += "<table align=\"right\"><tr><td colspan=2 align=\"center\">";
@@ -271,7 +282,6 @@ String valButton(String id, String val)
 // Set sec to 60 to remove seconds
 String timeFmt(bool do_sec, bool do_12, bool bBlink)
 {
-  
   String r = "";
   if(hourFormat12() <10) r = " ";
   r += hourFormat12();
@@ -329,8 +339,7 @@ void setup()
   pinMode(HEAT, OUTPUT);
   pinMode(BUZZ, OUTPUT);
 
-//  pinMode(HEAT, INPUT);   // for programming PIC
-//  pinMode(BUZZ, INPUT);
+  digitalWrite(HEAT, HIGH); // high is off
 
   // initialize dispaly
   display.init();
@@ -383,6 +392,7 @@ void setup()
   }
 
   logCounter = 60;
+  ctSend("/s?waterbedStatus=\"start\"");
 }
 
 void loop()
@@ -415,14 +425,14 @@ void loop()
       if(--logCounter == 0)
       {
         logCounter = ee.interval;
-        ctSendLog(0);
+        ctSendLog();
         eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
       }
     }
     DrawScreen();
 
 #ifdef USEPIC
-    if(heater)  // Send ON heartbeat to PIC
+    if(bHeater)  // Send ON heartbeat to PIC
     {
         digitalWrite(HEAT, !digitalRead(HEAT));     
     }
@@ -471,7 +481,7 @@ void DrawScreen()
     display.drawXbm(68+(3*14)-2, 32, 8, 8, inactive_bits); // degree
   }
 
-  const char *xbm = (heater == HIGH && b) ? active_bits : inactive_bits;
+  const char *xbm = (bHeater && b) ? active_bits : inactive_bits;
   display.drawXbm(2, 56, 8, 8, xbm);  // heater on indicator
 
   display.display();
@@ -520,19 +530,19 @@ void checkTemp()
   Serial.print("Temp: ");
   Serial.println(currentTemp);
 
-  if(currentTemp < ee.setTemp[activeTemp()] - ee.thresh && heater == LOW)
+  if(currentTemp < ee.setTemp[activeTemp()] - ee.thresh && bHeater == false)
   {
     Serial.println("Heat on");
-    heater = HIGH;
-    digitalWrite(HEAT, heater);
-    ctSendLog(0); // give a more precise account of changes
+    bHeater = true;
+    digitalWrite(HEAT, !bHeater);
+    ctSendLog(); // give a more precise account of changes
   }
-  else if(currentTemp > ee.setTemp[activeTemp()] && heater == HIGH)
+  else if(currentTemp > ee.setTemp[activeTemp()] && bHeater == true)
   {
     Serial.println("Heat off");
-    heater = LOW;
-    digitalWrite(HEAT, heater);
-    ctSendLog(0);
+    bHeater = false;
+    digitalWrite(HEAT, !bHeater);
+    ctSendLog();
   }
 }
 
@@ -652,10 +662,33 @@ bool activeTemp()
 }
 
 // Send logging data to a server.  This sends JSON formatted data to my local PC, but change to anything needed.
-void ctSendLog(uint32_t l)
+void ctSendLog()
+{
+  String url = "/s?waterbedLog={\"temp\": ";
+  url += currentTemp;
+  url += ",\"setTemp\": ";
+  url += ee.setTemp[activeTemp()];
+  url += ",\"on\": ";
+  url += bHeater;
+  url += "\"}";
+  ctSend(url);
+}
+
+void ctSendIP(uint32_t l)
 {
   ip4 ip;
   ip.l = l;
+
+  String s = "/s?waterbedIP=\"";
+  s += ip.b.b[0]; s += ".";  s += ip.b.b[1]; s += ".";  s += ip.b.b[2]; s += "."; s += ip.b.b[3];
+  s += "\"}";
+
+  ctSend(s);
+}
+
+// Send stuff to a server.
+void ctSend(String s)
+{
   if(ee.dataServer[0] == 0) return;
   WiFiClient client;
   if (!client.connect(ee.dataServer, ee.dataServerPort)) {
@@ -665,18 +698,8 @@ void ctSendLog(uint32_t l)
   }
   Serial.println("dataServer connected");
 
-  String url = "/s?waterbedLog={\"temp\": ";
-  url += currentTemp;
-  url += ",\"setTemp\": ";
-  url += ee.setTemp[activeTemp()];
-  url += ",\"on\": ";
-  url += heater;
-  url += ",\"IP\": \"";
-  url += ip.b.b[0]; url += ".";  url += ip.b.b[1]; url += ".";  url += ip.b.b[2]; url += "."; url += ip.b.b[3];
-  url += "\"}";
-
   // This will send the request to the server
-  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+  client.print(String("GET ") + s + " HTTP/1.1\r\n" +
                "Host: " + ee.dataServer + "\r\n" + 
                "Connection: close\r\n\r\n");
 
