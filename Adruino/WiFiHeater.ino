@@ -127,7 +127,7 @@ void handleRoot() // Main webpage interface
           password = s;
           break;
       case 'D': // DN or DD
-          ee.setTemp[ which ] += 10;
+          ee.setTemp[ which ] -= 10;
           break;
       case 'U': // UN or UD
           ee.setTemp[ which ] += 10;
@@ -191,7 +191,7 @@ void handleRoot() // Main webpage interface
       nWrongPass <<= 1;
     if(ip.l != lastIP.l)  // if different IP drop it down
        nWrongPass = 4;
-    ctSendIP(ip.l); // log attempts
+    ctSendIP(false, ip.l); // log attempts
   }
   lastIP.l = ip.l;
 
@@ -392,7 +392,7 @@ void setup()
   }
 
   logCounter = 60;
-  ctSend("/s?waterbedStatus=\"start\"");
+  ctSendIP(true, WiFi.localIP());
 }
 
 void loop()
@@ -569,7 +569,7 @@ void checkButtons()
     }
     else if(bState[0] == LOW) // holding down
     {
-      if( (millis() - lRepeatMillis) > 200)
+      if( (millis() - lRepeatMillis) > 150) // increase for slower repeat
       {
         changeTemp(1);
         lRepeatMillis = millis();
@@ -591,7 +591,7 @@ void checkButtons()
     }
     else if(bState[1] == LOW) // holding down
     {
-      if( (millis() - lRepeatMillis) > 200)
+      if( (millis() - lRepeatMillis) > 150)
       {
         changeTemp(-1);
         lRepeatMillis = millis();
@@ -668,20 +668,23 @@ void ctSendLog()
   url += currentTemp;
   url += ",\"setTemp\": ";
   url += ee.setTemp[activeTemp()];
+  url += ",\"active\": ";
+  url += activeTemp() ? "\"N\"":"\"D\"";
   url += ",\"on\": ";
   url += bHeater;
-  url += "\"}";
+  url += "}";
   ctSend(url);
 }
 
-void ctSendIP(uint32_t l)
+// Send local IP on start for comm, or bad password attempt IP when caught
+void ctSendIP(bool local, uint32_t l)
 {
   ip4 ip;
   ip.l = l;
 
-  String s = "/s?waterbedIP=\"";
+  String s = local ? "/s?waterbedIP=\"" : "/s?waterbedHackIP=\"";
   s += ip.b.b[0]; s += ".";  s += ip.b.b[1]; s += ".";  s += ip.b.b[2]; s += "."; s += ip.b.b[3];
-  s += "\"}";
+  s += "\"";
 
   ctSend(s);
 }
