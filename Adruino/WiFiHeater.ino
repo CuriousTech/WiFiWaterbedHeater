@@ -206,7 +206,7 @@ void handleRoot() // Main webpage interface
       "}\">";
 
   page += "<h3>WiFi Waterbed Heater </h3>";
-  page += "<p>" + timeFmt(true, true, true);
+  page += "<p>" + timeFmt(true, true);
   page += " &nbsp&nbsp&nbsp&nbsp ";
   page += currentTemp / 10; page += "."; page += currentTemp % 10;  page += "&degF ";
   page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
@@ -280,12 +280,12 @@ String valButton(String id, String val)
 }
 
 // Set sec to 60 to remove seconds
-String timeFmt(bool do_sec, bool do_12, bool bBlink)
+String timeFmt(bool do_sec, bool do_12)
 {
   String r = "";
   if(hourFormat12() <10) r = " ";
   r += hourFormat12();
-  r += (bBlink) ? ":" : " ";
+  r += ":";
   if(minute() < 10) r += "0";
   r += minute();
   if(do_sec)
@@ -404,7 +404,7 @@ void loop()
   if(sec_save != second()) // only do stuff once per second
   {
     sec_save = second();
-    
+
     checkTemp();
 
     if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
@@ -429,7 +429,6 @@ void loop()
         eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
       }
     }
-    DrawScreen();
 
 #ifdef USEPIC
     if(bHeater)  // Send ON heartbeat to PIC
@@ -438,12 +437,13 @@ void loop()
     }
 #endif
   }
+  DrawScreen();
 }
 
-const char days[][4] = {"Sun", "Mon", "Tue", "Wed", "Fri", "Sat"};
+const char days[][4] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 const char months[][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul","Aug", "Sep", "Oct", "Nov","Dec"};
 
-int8_t ind;
+int16_t ind;
 
 void DrawScreen()
 {
@@ -460,19 +460,21 @@ void DrawScreen()
     display.drawString(76, 54, activeTemp() ? "Night":" Day");
   
     display.setFontScale2x2(true);
-  
-    if(ind < 10)
-    {
-      display.drawString(12, 0, timeFmt(false, true, b) );
-    }
-    else
-    {
-      display.drawString(0, 0, days[weekday()-1] );
-      display.drawString( (day() < 10) ?  56 : 48, 0, String(day()) );
-      display.drawString(86, 0, months[month()-1] );
-    }
-    if(++ind > 20) ind = 0;
 
+    String s = timeFmt(true, true);
+    s += " ";
+    s += days[weekday()-1];
+    s += " ";
+    s += String(day());
+    s += " ";
+    s += months[month()-1];
+    s += " ";
+    int len = s.length();
+    s = s + s;
+
+    display.drawString(ind, 0, s );
+    if( --ind < -(len*14)) ind = 0;
+  
     display.drawString(2, 32, String(currentTemp) );
     display.drawXbm(2+(3*14)-2, 32, 8, 8, inactive_bits);
     display.fillRect(2+26, 32+14, 2, 2); // decimal pt
@@ -527,8 +529,8 @@ void checkTemp()
   int c = ((data[1] << 8) | data[0]) * 625;
 //  currentTemp = c / 1000;               // to 1 dec place celcius
   currentTemp = ((c * 18) / 10000) + 320; // Fahreneit
-  Serial.print("Temp: ");
-  Serial.println(currentTemp);
+//  Serial.print("Temp: ");
+//  Serial.println(currentTemp);
 
   if(currentTemp < ee.setTemp[activeTemp()] - ee.thresh && bHeater == false)
   {
@@ -724,7 +726,6 @@ void ctSend(String s)
 bool ctSetIp()
 {
   WiFiClient client;
-//Serial.println("ctSetIp");
   if (!client.connect(myHost, httpPort))
   {
     Serial.println("Host ip connection failed");
