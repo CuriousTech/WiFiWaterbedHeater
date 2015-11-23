@@ -118,8 +118,7 @@ void handleRoot() // Main webpage interface
     server.arg(i).toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
     Serial.println( i + " " + server.argName ( i ) + ": " + s);
-
-    bool which = tolower((server.argName(i).charAt(1) ) == 'n') ? 1:0;
+    bool which = (tolower(server.argName(i).charAt(1) ) == 'n') ? 1:0;
 
     switch( server.argName(i).charAt(0)  )
     {
@@ -182,7 +181,7 @@ void handleRoot() // Main webpage interface
   ip4 ip;
   ip.l = server.client().remoteIP();
 
-  if(password != controlPassword || nWrongPass)
+  if(server.args() && (password != controlPassword) )
   {
     memcpy(&ee, &save, sizeof(ee)); // undo any changes
     if(nWrongPass < 4)
@@ -440,9 +439,6 @@ void loop()
   DrawScreen();
 }
 
-const char days[][4] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-const char months[][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul","Aug", "Sep", "Oct", "Nov","Dec"};
-
 int16_t ind;
 
 void DrawScreen()
@@ -455,32 +451,34 @@ void DrawScreen()
   if(bDisplay_on) // draw only ON indicator if screen off
   {
     display.setFontScale2x2(false);
-    display.drawString( 8, 19, "Temp");
-    display.drawString(80, 19, "Set");
-    display.drawString(76, 54, activeTemp() ? "Night":" Day");
+    display.drawString( 8, 22, "Temp");
+    display.drawString(80, 22, "Set");
+    display.drawString(76, 55, activeTemp() ? "Night":" Day");
   
     display.setFontScale2x2(true);
 
     String s = timeFmt(true, true);
-    s += " ";
-    s += days[weekday()-1];
+    s += "  ";
+    s += dayShortStr(weekday());
     s += " ";
     s += String(day());
     s += " ";
-    s += months[month()-1];
-    s += " ";
+    s += monthShortStr(month());
+    s += "  ";
     int len = s.length();
     s = s + s;
 
-    display.drawString(ind, 0, s );
-    if( --ind < -(len*14)) ind = 0;
-  
-    display.drawString(2, 32, String(currentTemp) );
-    display.drawXbm(2+(3*14)-2, 32, 8, 8, inactive_bits);
-    display.fillRect(2+26, 32+14, 2, 2); // decimal pt
-    display.drawString(68, 32, String(ee.setTemp[activeTemp()]) );
-    display.fillRect(68+26, 32+14, 2, 2); // decimal pt
-    display.drawXbm(68+(3*14)-2, 32, 8, 8, inactive_bits); // degree
+    int w = display.drawPropString(ind, 0, s );
+    if( --ind < -(w)) ind = 0;
+
+    String temp = String(currentTemp / 10) + "."; 
+    temp += currentTemp % 10;
+    temp += ""; // <- that's a 0x7F
+    display.drawPropString(2, 33, temp );
+    temp = String(ee.setTemp[activeTemp()] / 10) + ".";
+    temp += ee.setTemp[activeTemp()] % 10;
+    temp += "";
+    display.drawPropString(68, 33, temp );
   }
 
   const char *xbm = (bHeater && b) ? active_bits : inactive_bits;
