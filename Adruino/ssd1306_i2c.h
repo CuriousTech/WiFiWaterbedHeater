@@ -31,6 +31,7 @@ Credits for parts of this code go to Mike Rankin. Thank you so much for sharing!
 #define WHITE 1
 #define INVERSE 2
 
+
 class SSD1306 {
 
 private:
@@ -62,8 +63,11 @@ public:
    void setPixel(int x, int y);
    void setChar(int x, int y, unsigned char data);
    void drawString(int x, int y, String text);
-   void scroll(void);
+   int drawPropString(int x, int y, String text);
+   void scroll8up(void);
    void print(String text);
+   void startScrollLeft(uint8_t start, uint8_t stop);
+   void stopScroll(void);
    void setFontScale2x2(bool isFontScaling2x2);
    void drawBitmap(int x, int y, int width, int height, const char *bitmap);
    void drawXbm(int x, int y, int width, int height, const char *xbm);
