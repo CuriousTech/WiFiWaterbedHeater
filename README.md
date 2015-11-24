@@ -7,7 +7,7 @@ There are 3 servo style I/Os on the bottom back. 1: Power in + SSR control. 2: A
 
 Display and web interface below.  It currently has a day / night setting for automatic efficiency.  Logging to chart the power usage and temperature changes.  As well as web remote control and global access for vacation adjustment.
 
-![Control](http://curioustech.net/images/waterbedui.png)
+![Control](http://curioustech.net/images/waterbed_ui.png)
 
 
 ![Slave](http://curioustech.net/images/wb_slave.png)
