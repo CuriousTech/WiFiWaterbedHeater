@@ -96,7 +96,7 @@ void SSD1306::display(void) {
     }
 }
 
-void SSD1306::scroll()
+void SSD1306::scroll8up()
 {
     for(int i=0;i<896;i++)
       buffer[i] = buffer[i+128];
@@ -106,7 +106,7 @@ void SSD1306::scroll()
 }
 
 void SSD1306::print(String text){
-  scroll();
+  scroll8up();
   drawString(0, 56, text);
   display();
 }
@@ -126,7 +126,7 @@ void SSD1306::setChar(int x, int y, unsigned char data) {
   for (int i = 0; i < 8; i++) {
     if (bitRead(data, i)) {
      setPixel(x,y + i);
-    }   
+    }
   }   
 }
 
@@ -137,17 +137,59 @@ void SSD1306::drawString(int x, int y, String text) {
       for (int pixel = 0; pixel < 8; pixel++) {
         if (bitRead(charColumn, pixel)) {
           if (myIsFontScaling2x2) {
-             setPixel(x + 2*(j* 8 + i),y + 2*pixel);
-             setPixel(x + 2*(j* 8 + i)+1,y + 2*pixel +1);
-             setPixel(x + 2*(j* 8 + i)+1,y + 2*pixel);
-             setPixel(x + 2*(j* 8 + i),y + 2*pixel +1);
+             setPixel(x + 2*(j* 7 + i),y + 2*pixel);
+             setPixel(x + 2*(j* 7 + i)+1,y + 2*pixel +1);
+             setPixel(x + 2*(j* 7 + i)+1,y + 2*pixel);
+             setPixel(x + 2*(j* 7 + i),y + 2*pixel +1);
           } else {
-             setPixel(x + j* 8 + i,y + pixel);  
+             setPixel(x + j* 7 + i,y + pixel);  
           }
         }   
       }
     }
   }
+}
+
+int SSD1306::drawPropString(int x, int y, String text)
+{
+  struct FONT_INFO font = crystalclear_14ptFontInfo;
+ 
+  for (int j=0; j < text.length(); j++)
+  {
+    switch(text.charAt(j)) // Make numbers fixed for the scroller, and adjust spacing
+    {
+        case ' ': x += font.space_width + 1; continue; // skip spaces
+        case '0': x += 3; break;
+        case '1': x += 7; break;
+        case '3': x += 2; break;
+        case ':': x += 2; break;
+    }
+
+    unsigned char ch = text.charAt(j) - font.start_ch;
+    if(ch > 58) ch--; // there's a char missing between Z and a?
+    int w = font.pInfo[ch].w;
+    const unsigned char *p = font.pBitmaps + font.pInfo[ch].offset;
+    int bytes = (w+7) >> 3;
+
+    for(int i = 0; i < font.height; i++)
+    {
+      int x2 = x;
+      for(int b = 0; b < bytes; b++)
+      {
+        unsigned char charColumn = *p++;
+        for (int pixel = 0; pixel < 8; pixel++)
+        {
+          if (bitRead(charColumn, 7-pixel))
+          {
+             setPixel(x2 + pixel,y + i);
+          }
+        }
+        x2 += 8;
+      }
+    }
+    x += w + 1;
+  }
+  return x; // return width used
 }
 
 void SSD1306::setFontScale2x2(bool isFontScaling2x2) {
@@ -217,47 +259,82 @@ void SSD1306::sendCommand(unsigned char com)
 
 void SSD1306::sendInitCommands(void)
 {
-  sendCommand(0xae);		//display off
-  sendCommand(0xa6);            //Set Normal Display (default)
+  sendCommand(0xae);		    //display off
+  sendCommand(0xa6);        //Set Normal Display (default)
   // Adafruit Init sequence for 128x64 OLED module
-  sendCommand(0xAE);             //DISPLAYOFF
-  sendCommand(0xD5);            //SETDISPLAYCLOCKDIV
-  sendCommand(0x80);            // the suggested ratio 0x80
-  sendCommand(0xA8);            //SSD1306_SETMULTIPLEX
+//  sendCommand(0xAE);        //DISPLAYOFF
+  sendCommand(0xD5);        //SETDISPLAYCLOCKDIV
+  sendCommand(0x80);        // the suggested ratio 0x80
+  sendCommand(0xA8);        //SSD1306_SETMULTIPLEX
   sendCommand(0x3F);
-  sendCommand(0xD3);            //SETDISPLAYOFFSET
-  sendCommand(0x0);             //no offset
-  sendCommand(0x40 | 0x0);      //SETSTARTLINE
-  sendCommand(0x8D);            //CHARGEPUMP
+  sendCommand(0xD3);        //SETDISPLAYOFFSET
+  sendCommand(0x0);         //no offset
+  sendCommand(0x40 | 0x0);  //SETSTARTLINE
+  sendCommand(0x8D);        //CHARGEPUMP
   sendCommand(0x14);
-  sendCommand(0x20);             //MEMORYMODE
-  sendCommand(0x00);             //0x0 act like ks0108
+  sendCommand(0x20);        //MEMORYMODE
+  sendCommand(0x00);        //0x0 act like ks0108
   
-  //sendCommand(0xA0 | 0x1);      //SEGREMAP   //Rotate screen 180 deg
+  //sendCommand(0xA0 | 0x1);//SEGREMAP   //Rotate screen 180 deg
   sendCommand(0xA0);
   
-  //sendCommand(0xC8);            //COMSCANDEC  Rotate screen 180 Deg
+  //sendCommand(0xC8);      //COMSCANDEC  Rotate screen 180 Deg
   sendCommand(0xC0);
-
-  sendCommand(0xDA);            //0xDA
-  sendCommand(0x12);           //COMSCANDEC
-  sendCommand(0x81);           //SETCONTRAS
-  sendCommand(0xCF);           //
-  sendCommand(0xd9);          //SETPRECHARGE
+  sendCommand(0xDA);        //0xDA
+  sendCommand(0x12);        //COMSCANDEC
+  sendCommand(0x81);        //SETCONTRAS
+  sendCommand(0x01);        // 0xCF
+  sendCommand(0xd9);        //SETPRECHARGE
   sendCommand(0xF1);
   sendCommand(0xDB);        //SETVCOMDETECT
   sendCommand(0x40);
   sendCommand(0xA4);        //DISPLAYALLON_RESUME
   sendCommand(0xA6);        //NORMALDISPLAY
 
-  sendCommand(0x2e);            // stop scroll
+  sendCommand(0x2e);        // stop scroll
   //----------------------------REVERSE comments----------------------------//
-    sendCommand(0xa0);		//seg re-map 0->127(default)
-    sendCommand(0xa1);		//seg re-map 127->0
+    sendCommand(0xa0);	  	//seg re-map 0->127(default)
+    sendCommand(0xa1);	  	//seg re-map 127->0
+
+    sendCommand(0xa3);      // Clear scroll area
+    sendCommand(0);
+    sendCommand(64);
+
+
+    sendCommand(0x26);  // Clear all scroll registers 0x27-0x29
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0xFF);
+    
+    sendCommand(0x27);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0xFF);
+
+    sendCommand(0x28);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+
+    sendCommand(0x29);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+    sendCommand(0);
+
     sendCommand(0xc8);
-    delay(1000);
+    delay(100);
   //----------------------------REVERSE comments----------------------------//
-  // sendCommand(0xa7);  //Set Inverse Display  
+  // sendCommand(0xa7);  //Set Inverse Display
   // sendCommand(0xae);		//display off
   sendCommand(0x20);            //Set Memory Addressing Mode
   sendCommand(0x00);            //Set Memory Addressing Mode ab Horizontal addressing mode
