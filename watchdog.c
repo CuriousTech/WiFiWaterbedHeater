@@ -20,7 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// PIC10F320 Interface for WiFi Waterbed heater safety control and PWM buzzer output
+// PIC10F320 watchdog for WiFi Waterbed heater safety control and PWM buzzer output
 // Rev.1
 
 #include <stdio.h>
