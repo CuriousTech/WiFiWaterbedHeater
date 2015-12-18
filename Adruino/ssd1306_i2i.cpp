@@ -38,7 +38,7 @@ SSD1306::SSD1306(int i2cAddress, int sda, int sdc)
 
 void SSD1306::init() {
   Wire.begin(mySda, mySdc);
-  Wire.setClock(400000); 
+  Wire.setClock(400000);
   sendInitCommands();
   resetDisplay();
 }
@@ -259,7 +259,7 @@ void SSD1306::sendCommand(unsigned char com)
 
 void SSD1306::sendInitCommands(void)
 {
-  sendCommand(0xae);		    //display off
+  sendCommand(0xae);        //display off
   sendCommand(0xa6);        //Set Normal Display (default)
   // Adafruit Init sequence for 128x64 OLED module
 //  sendCommand(0xAE);        //DISPLAYOFF
@@ -292,6 +292,7 @@ void SSD1306::sendInitCommands(void)
   sendCommand(0xA6);        //NORMALDISPLAY
 
   sendCommand(0x2e);        // stop scroll
+  sendCommand(0xc8);
   //----------------------------REVERSE comments----------------------------//
     sendCommand(0xa0);	  	//seg re-map 0->127(default)
     sendCommand(0xa1);	  	//seg re-map 127->0
@@ -331,7 +332,6 @@ void SSD1306::sendInitCommands(void)
     sendCommand(0);
     sendCommand(0);
 
-    sendCommand(0xc8);
     delay(100);
   //----------------------------REVERSE comments----------------------------//
   // sendCommand(0xa7);  //Set Inverse Display
