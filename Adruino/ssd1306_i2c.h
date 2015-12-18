@@ -25,301 +25,56 @@ See more at http://blog.squix.ch
 Credits for parts of this code go to Mike Rankin. Thank you so much for sharing!
 */
 
-#include "ssd1306_i2c.h"
-#include <Wire.h>
-#include "font.h"
+#include <Arduino.h>
 
-SSD1306::SSD1306(int i2cAddress, int sda, int sdc)
-{
-  myI2cAddress = i2cAddress;
-  mySda = sda;
-  mySdc = sdc;
-}
+#define BLACK 0
+#define WHITE 1
+#define INVERSE 2
 
-void SSD1306::init() {
-  Wire.begin(mySda, mySdc);
-  Wire.setClock(400000); 
-  sendInitCommands();
-  resetDisplay();
-}
 
-void SSD1306::resetDisplay(void)
-{
-  displayOff();
-  clear();
-  display();
-  displayOn();
-}
+class SSD1306 {
 
-void SSD1306::reconnect() {
-  Wire.begin(mySda, mySdc);  
-}
+private:
+   int myI2cAddress;
+   int mySda;
+   int mySdc;
+   uint8_t buffer[128 * 64 / 8];
+   bool myIsFontScaling2x2 = false;
+   int myFrameState = 0;
+   int myFrameTick = 0;
+   int myCurrentFrame = 0;
+   int myFrameCount = 0;
+   int myFrameWaitTicks = 100;
+   int myFrameTransitionTicks = 25;
+   int myColor = WHITE;
+   void (**myFrameCallbacks)(int x, int y);
 
-void SSD1306::displayOn(void)
-{
-    sendCommand(0xaf);        //display on
-}
-
-void SSD1306::displayOff(void)
-{
-  sendCommand(0xae);		//display off
-}
-
-void SSD1306::setContrast(char contrast) {
-  sendCommand(0x81);
-  sendCommand(contrast);
-}
-
-void SSD1306::flipScreenVertically() {
-  sendCommand(0xA0 | 0x1);      //SEGREMAP   //Rotate screen 180 deg
-  sendCommand(0xC8);            //COMSCANDEC  Rotate screen 180 Deg
-}
-
-void SSD1306::clear(void) {
-    memset(buffer, 0, (128*64 / 8));
-}
-
-void SSD1306::display(void) {
-
-    for (uint16_t i=0; i<(128*64/8); i++) {
-      // send a bunch of data in one xmission
-      //Wire.begin(mySda, mySdc);
-      Wire.beginTransmission(myI2cAddress);
-      Wire.write(0x40);
-      for (uint8_t x=0; x<16; x++) {
-        Wire.write(buffer[i]);
-        i++;
-      }
-      i--;
-      yield();
-      Wire.endTransmission();
-    }
-}
-
-void SSD1306::scroll8up()
-{
-    for(int i=0;i<896;i++)
-      buffer[i] = buffer[i+128];
-    for(int i=896;i<1024;i++)
-      buffer[i] = 0;
-    display();
-}
-
-void SSD1306::startScrollLeft(uint8_t start, uint8_t stop)
-{
-  sendCommand(0x27);
-  sendCommand(0X00);
-  sendCommand(start);
-  sendCommand(0X00);
-  sendCommand(stop);
-  sendCommand(0X00);
-  sendCommand(0XFF);
-  sendCommand(0x2F);
-}
-
-void SSD1306::stopScroll(void)
-{
-  sendCommand(0x2E);
-}
-
-void SSD1306::print(String text){
-  scroll8up();
-  drawString(0, 56, text);
-  display();
-}
-
-void SSD1306::setPixel(int x, int y) {
-  if (x >= 0 && x < 128 && y >= 0 && y < 64) {
-     
-     switch (myColor) {
-      case WHITE:   buffer[x+ (y/8)*128] |=  (1 << (y&7)); break;
-      case BLACK:   buffer[x+ (y/8)*128] &= ~(1 << (y&7)); break; 
-      case INVERSE: buffer[x+ (y/8)*128] ^=  (1 << (y&7)); break; 
-    }
-  }
-}
-
-void SSD1306::setChar(int x, int y, unsigned char data) {
-  for (int i = 0; i < 8; i++) {
-    if (bitRead(data, i)) {
-     setPixel(x,y + i);
-    }
-  }   
-}
-
-void SSD1306::drawString(int x, int y, String text) {
-  for (int j=0; j < text.length(); j++) {
-    for(int i=0;i<8;i++) {
-      unsigned char charColumn = pgm_read_byte(myFont[text.charAt(j)-0x20]+i);
-      for (int pixel = 0; pixel < 8; pixel++) {
-        if (bitRead(charColumn, pixel)) {
-          if (myIsFontScaling2x2) {
-             setPixel(x + 2*(j* 7 + i),y + 2*pixel);
-             setPixel(x + 2*(j* 7 + i)+1,y + 2*pixel +1);
-             setPixel(x + 2*(j* 7 + i)+1,y + 2*pixel);
-             setPixel(x + 2*(j* 7 + i),y + 2*pixel +1);
-          } else {
-             setPixel(x + j* 7 + i,y + pixel);  
-          }
-        }   
-      }
-    }
-  }
-}
-
-int SSD1306::drawPropString(int x, int y, String text)
-{
-  struct FONT_INFO font = crystalclear_14ptFontInfo;
- 
-  for (int j=0; j < text.length(); j++)
-  {
-    switch(text.charAt(j)) // Make numbers fixed for the scroller, and adjust spacing
-    {
-        case ' ': x += font.space_width + 1; continue; // skip spaces
-        case '0': x += 3; break;
-        case '1': x += 7; break;
-        case '3': x += 2; break;
-        case ':': x += 2; break;
-    }
-
-    unsigned char ch = text.charAt(j) - font.start_ch;
-    if(ch > 58) ch--; // there's a char missing between Z and a?
-    int w = font.pInfo[ch].w;
-    int off = font.pInfo[ch].offset;
-    const unsigned char *p = font.pBitmaps + off;
-    int bytes = (w+7) >> 3;
-
-    for(int i = 0; i < font.height; i++)
-    {
-      int x2 = x;
-      for(int b = 0; b < bytes; b++)
-      {
-        unsigned char charColumn = (unsigned char)*p++;
-        for (int pixel = 0; pixel < 8; pixel++)
-        {
-          if (bitRead(charColumn, 7-pixel))
-          {
-             setPixel(x2 + pixel,y + i);
-          }
-        }
-        x2 += 8;
-      }
-    }
-    x += w + 1;
-  }
-  return x;
-}
-
-void SSD1306::setFontScale2x2(bool isFontScaling2x2) {
-  myIsFontScaling2x2 = isFontScaling2x2;
-}
-
-void SSD1306::drawBitmap(int x, int y, int width, int height, const char *bitmap) {
-  for (int i = 0; i < width * height / 8; i++ ){
-    unsigned char charColumn = 255 - pgm_read_byte(bitmap + i);
-    for (int j = 0; j < 8; j++) { 
-      int targetX = i % width + x;
-      int targetY = (i / (width)) * 8 + j + y;
-      if (bitRead(charColumn, j)) {
-        setPixel(targetX, targetY);  
-      }
-    }
-  }  
-}
-
-void SSD1306::setColor(int color) {
-  myColor = color;  
-}
-
-void SSD1306::drawRect(int x, int y, int width, int height) {
-  for (int i = x; i < x + width; i++) {
-    setPixel(i, y);
-    setPixel(i, y + height);    
-  }
-  for (int i = y; i < y + height; i++) {
-    setPixel(x, i);
-    setPixel(x + width, i);  
-  }
-}
-
-void SSD1306::fillRect(int x, int y, int width, int height) {
-  for (int i = x; i < x + width; i++) {
-    for (int j = y; j < y + height; j++) {
-      setPixel(i, j);
-    }
-  }
-}
-
-void SSD1306::drawXbm(int x, int y, int width, int height, const char *xbm) {
-  if (width % 8 != 0) {
-    width =  ((width / 8) + 1) * 8;
-  }
-  for (int i = 0; i < width * height / 8; i++ ){
-    unsigned char charColumn = pgm_read_byte(xbm + i);
-    for (int j = 0; j < 8; j++) { 
-      int targetX = (i * 8 + j) % width + x;
-      int targetY = (8 * i / (width)) + y;
-      if (bitRead(charColumn, j)) {
-        setPixel(targetX, targetY);  
-      }
-    }
-  }    
-}
-
-void SSD1306::sendCommand(unsigned char com)
-{
-  //Wire.begin(mySda, mySdc);
-  Wire.beginTransmission(myI2cAddress);     //begin transmitting
-  Wire.write(0x80);                          //command mode
-  Wire.write(com);
-  Wire.endTransmission();                    // stop transmitting
-}
-
-void SSD1306::sendInitCommands(void)
-{
-  sendCommand(0xae);		//display off
-  sendCommand(0xa6);            //Set Normal Display (default)
-  // Adafruit Init sequence for 128x64 OLED module
-  sendCommand(0xAE);             //DISPLAYOFF
-  sendCommand(0xD5);            //SETDISPLAYCLOCKDIV
-  sendCommand(0x80);            // the suggested ratio 0x80
-  sendCommand(0xA8);            //SSD1306_SETMULTIPLEX
-  sendCommand(0x3F);
-  sendCommand(0xD3);            //SETDISPLAYOFFSET
-  sendCommand(0x0);             //no offset
-  sendCommand(0x40 | 0x0);      //SETSTARTLINE
-  sendCommand(0x8D);            //CHARGEPUMP
-  sendCommand(0x14);
-  sendCommand(0x20);             //MEMORYMODE
-  sendCommand(0x00);             //0x0 act like ks0108
-  
-  //sendCommand(0xA0 | 0x1);      //SEGREMAP   //Rotate screen 180 deg
-  sendCommand(0xA0);
-  
-  //sendCommand(0xC8);            //COMSCANDEC  Rotate screen 180 Deg
-  sendCommand(0xC0);
-
-  sendCommand(0xDA);            //0xDA
-  sendCommand(0x12);           //COMSCANDEC
-  sendCommand(0x81);           //SETCONTRAS
-  sendCommand(0xCF);           //
-  sendCommand(0xd9);          //SETPRECHARGE
-  sendCommand(0xF1);
-  sendCommand(0xDB);        //SETVCOMDETECT
-  sendCommand(0x40);
-  sendCommand(0xA4);        //DISPLAYALLON_RESUME
-  sendCommand(0xA6);        //NORMALDISPLAY
-
-  sendCommand(0x2e);            // stop scroll
-  //----------------------------REVERSE comments----------------------------//
-    sendCommand(0xa0);		//seg re-map 0->127(default)
-    sendCommand(0xa1);		//seg re-map 127->0
-    sendCommand(0xc8);
-    delay(1000);
-  //----------------------------REVERSE comments----------------------------//
-  // sendCommand(0xa7);  //Set Inverse Display  
-  // sendCommand(0xae);		//display off
-  sendCommand(0x20);            //Set Memory Addressing Mode
-  sendCommand(0x00);            //Set Memory Addressing Mode ab Horizontal addressing mode
-  // sendCommand(0x02);         // Set Memory Addressing Mode ab Page addressing mode(RESET)  
-}
+   
+public:
+   // Empty constructor
+   SSD1306(int i2cAddress, int sda, int sdc);
+   void init();
+   void resetDisplay(void);
+   void reconnect(void);
+   void displayOn(void);
+   void displayOff(void);
+   void clear(void);
+   void display(void);
+   void setPixel(int x, int y);
+   void setChar(int x, int y, unsigned char data);
+   void drawString(int x, int y, String text);
+   int drawPropString(int x, int y, String text);
+   void scroll8up(void);
+   void print(String text);
+   void setFontScale2x2(bool isFontScaling2x2);
+   void drawBitmap(int x, int y, int width, int height, const char *bitmap);
+   void drawXbm(int x, int y, int width, int height, const char *xbm);
+   void sendCommand(unsigned char com);
+   void sendInitCommands(void);
+   void setColor(int color);
+   void drawRect(int x, int y, int width, int height);
+   void fillRect(int x, int y, int width, int height);
+   
+   void setContrast(char contrast);
+   void flipScreenVertically();
+};
