@@ -52,22 +52,24 @@ extern "C" {
   #include "user_interface.h" // Needed for deepSleep which isn't used
 }
 
-#define HEAT     2  // Also blue LED on ESP
-#define LED     12
-#define BTN_UP  13
-#define DS18B20 14
-#define BUZZ    15
-#define BTN_DN  16
+#define LED       0  // back LED for debug
+#define ESP_LED   2  //Blue LED on ESP07 (on low)
+#define HEARTBEAT 2
+#define HEAT     12  // Also blue "HEAT" LED
+#define BTN_UP   13
+#define DS18B20  14
+#define BEEP     15
+#define BTN_DN   16
 
 OneWire ds(DS18B20);
 byte ds_addr[8];
 long read_temp;
 long read_scratch;
 bool bScratch;
-ip4 lastIP;
+uint32_t lastIP;
 int nWrongPass;
 
-SSD1306 display(0x3c, 4, 5); // Initialize the oled display for address 0x3c, sda=14, sdc=12
+SSD1306 display(0x3c, 4, 5); // Initialize the oled display for address 0x3c, sda=4, sdc=5
 bool bDisplay_on = true;
 
 WiFiManager wifi(0);  // AP page:  192.168.4.1
@@ -97,10 +99,24 @@ bool bState[2];
 bool lbState[2];
 long debounce[2];
 long lRepeatMillis;
-int currentTemp = 99;
+int currentTemp = 999;
 bool bHeater = false;
 bool bNeedUpdate = true;
 int logCounter;
+
+String ipString(long l)
+{
+  ip4 ip;
+  ip.l = l;
+  String sip = String(ip.b.b[0]);
+  sip += ".";
+  sip += ip.b.b[1];
+  sip += ".";
+  sip += ip.b.b[2];
+  sip += ".";
+  sip += ip.b.b[3];
+  return sip;
+}
 
 void handleRoot() // Main webpage interface
 {
@@ -141,7 +157,7 @@ void handleRoot() // Main webpage interface
           ee.tz = s.toInt();
           bUpdateTime = true; // refresh current time
           break;
-      case 'i': // ?ip=server&port=80&int=60&key=password (htTp://192.168.0.197:82/s?ip=192.168.0.189&port=81&int=5&key=password)
+      case 'i': // ?ip=server&port=80&int=60&key=password (htTp://192.168.0.197:82/s?ip=192.168.0.189&port=81&int=600&key=password)
           if(which) // interval
           {
             ee.interval = s.toInt();
@@ -163,23 +179,25 @@ void handleRoot() // Main webpage interface
       case 'O': // OLED
           bDisplay_on = s.toInt() ? true:false;
           break;
+      case 'A':   // Test the watchdog
+          digitalWrite(BEEP, s.toInt() ? true:false);
+          break;
       case 'B':   // for PIC programming
           if(s.toInt())
           {
-              pinMode(HEAT, OUTPUT);
-              pinMode(BUZZ, OUTPUT);
+              pinMode(BEEP, OUTPUT);
+              pinMode(HEARTBEAT, OUTPUT);
           }
           else
           {
-              pinMode(HEAT, INPUT);
-              pinMode(BUZZ, INPUT);
+              pinMode(BEEP, INPUT);
+              pinMode(HEARTBEAT, INPUT);
           }
           break;
     }
   }
 
-  ip4 ip;
-  ip.l = server.client().remoteIP();
+  uint32_t ip = server.client().remoteIP();
 
   if(server.args() && (password != controlPassword) )
   {
@@ -188,11 +206,11 @@ void handleRoot() // Main webpage interface
       nWrongPass = 4;
     else if((nWrongPass & 0xFFFFF000) == 0 ) // time doubles for every wrong password attempt.  Max 1 hour
       nWrongPass <<= 1;
-    if(ip.l != lastIP.l)  // if different IP drop it down
+    if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 4;
-    ctSendIP(false, ip.l); // log attempts
+    ctSendIP(false, ip); // log attempts
   }
-  lastIP.l = ip.l;
+  lastIP = ip;
 
   checkLimits();
 
@@ -207,7 +225,7 @@ void handleRoot() // Main webpage interface
   page += "<h3>WiFi Waterbed Heater </h3>";
   page += "<p>" + timeFmt(true, true);
   page += " &nbsp&nbsp&nbsp&nbsp ";
-  page += currentTemp / 10; page += "."; page += currentTemp % 10;  page += "&degF ";
+  page += sDec(currentTemp) + "&degF ";
   page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
   page += "</p>";
   
@@ -232,7 +250,7 @@ void handleRoot() // Main webpage interface
   page += "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">";
   page += "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">";
   page += "<br>Logged IP: ";
-  page += ip.b.b[0];  page += ".";  page += ip.b.b[1];  page += ".";  page += ip.b.b[2];  page += ".";  page += ip.b.b[3];
+  page += ipString(ip);
   page += "<br></body></html>";
 
   server.send ( 200, "text/html", page );
@@ -262,10 +280,15 @@ String timeButton(String id, int t) // time and set buttons
 
 String tempButton(String id, int t) // temp and set buttons
 {
+  String s = sDec(t) + "F";
+  return valButton(id, s);
+}
+
+String sDec(int t)
+{
   String s = String( t / 10 ) + ".";
   s += t % 10;
-  s += "F";
-  return valButton(id, s);
+  return s;
 }
 
 String valButton(String id, String val)
@@ -333,16 +356,18 @@ void handleNotFound() {
 void setup()
 {
   pinMode(LED, OUTPUT);
+  pinMode(BEEP, OUTPUT);
   pinMode(BTN_UP, INPUT_PULLUP);
   pinMode(BTN_DN, INPUT); // IO16 has external pullup
   pinMode(HEAT, OUTPUT);
-  pinMode(BUZZ, OUTPUT);
+  pinMode(HEARTBEAT, OUTPUT);
 
   digitalWrite(HEAT, HIGH); // high is off
+  digitalWrite(BEEP, LOW); // enable watchdog
 
   // initialize dispaly
   display.init();
-  display.setContrast(0);
+  digitalWrite(HEARTBEAT, LOW);
 
   display.clear();
   display.display();
@@ -371,6 +396,7 @@ void setup()
     server.send ( 200, "text/plain", "this works as well" );
   } );
   server.onNotFound ( handleNotFound );
+  digitalWrite(HEARTBEAT, HIGH);
   server.begin();
 
   if( ds.search(ds_addr) )
@@ -392,6 +418,7 @@ void setup()
 
   logCounter = 60;
   ctSendIP(true, WiFi.localIP());
+  digitalWrite(HEARTBEAT, LOW);
 }
 
 void loop()
@@ -408,6 +435,7 @@ void loop()
 
     if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
     {
+      display.init();
       if( (hour_save = hour()) == 2)
         bNeedUpdate = true;
     }
@@ -429,24 +457,20 @@ void loop()
       }
     }
 
-#ifdef USEPIC
-    if(bHeater)  // Send ON heartbeat to PIC
-    {
-        digitalWrite(HEAT, !digitalRead(HEAT));     
-    }
-#endif
+    digitalWrite(HEARTBEAT, !digitalRead(HEARTBEAT));
   }
   DrawScreen();
 }
 
 int16_t ind;
+bool b = false;
+int o2 = 0;
+long last;
 
 void DrawScreen()
 {
   // draw the screen here
   display.clear();
-
-  bool b = (second() & 1) ? true:false;
 
   if(bDisplay_on) // draw only ON indicator if screen off
   {
@@ -454,8 +478,8 @@ void DrawScreen()
     display.drawString( 8, 22, "Temp");
     display.drawString(80, 22, "Set");
     display.drawString(76, 55, activeTemp() ? "Night":" Day");
-  
-    display.setFontScale2x2(true);
+
+//  display.setFontScale2x2(true);
 
     String s = timeFmt(true, true);
     s += "  ";
@@ -471,18 +495,31 @@ void DrawScreen()
     int w = display.drawPropString(ind, 0, s );
     if( --ind < -(w)) ind = 0;
 
-    String temp = String(currentTemp / 10) + "."; 
-    temp += currentTemp % 10;
-    temp += ""; // <- that's a 0x7F
+    String temp = sDec(currentTemp) + ""; // <- that's a 0x7F
     display.drawPropString(2, 33, temp );
-    temp = String(ee.setTemp[activeTemp()] / 10) + ".";
-    temp += ee.setTemp[activeTemp()] % 10;
-    temp += "";
-    display.drawPropString(68, 33, temp );
+    temp = sDec(ee.setTemp[activeTemp()]) + "";
+    display.drawPropString(70, 33, temp );
   }
-
+/*
+  if( (millis() - last) > 400) // blinky on indicator
+  {
+    last = millis();
+    b = !b;
+  }
   const char *xbm = (bHeater && b) ? active_bits : inactive_bits;
   display.drawXbm(2, 56, 8, 8, xbm);  // heater on indicator
+*/
+
+ if(bHeater) // wierd animated on indicator
+ {
+    for(int y = 54;y < 64; y++)
+    {
+      for(int x = o2; x < 28; x += 8)
+        display.setPixel(x, y);
+      if((o2++) > 6) o2 = 0;
+    }
+    display.drawString(1, 55, "Heat");
+ }
 
   display.display();
 }
@@ -523,10 +560,17 @@ void checkTemp()
     Serial.println("Invalid CRC");
     return;
   }
+  Serial.print("Temp: ");
+  Serial.print( (data[1] << 8) | data[0]);
+  Serial.print( " " );
 
   int c = ((data[1] << 8) | data[0]) * 625;
 //  currentTemp = c / 1000;               // to 1 dec place celcius
-  currentTemp = ((c * 18) / 10000) + 320; // Fahreneit
+  int newTemp = ((c * 18) / 10000) + 320; // Fahreneit
+  if(newTemp > currentTemp + 100)
+    Serial.println("Skipping strange reading");
+  else currentTemp = newTemp;
+  Serial.println( currentTemp );
 //  Serial.print("Temp: ");
 //  Serial.println(currentTemp);
 
@@ -607,7 +651,6 @@ void changeTemp(int8_t delta)
 {
   ee.setTemp[activeTemp()] += delta;
   checkLimits();
-  DrawScreen();
 }
 
 void checkLimits()
@@ -665,9 +708,9 @@ bool activeTemp()
 void ctSendLog()
 {
   String url = "/s?waterbedLog={\"temp\": ";
-  url += currentTemp;
+  url += sDec(currentTemp);
   url += ",\"setTemp\": ";
-  url += ee.setTemp[activeTemp()];
+  url += sDec(ee.setTemp[activeTemp()]);
   url += ",\"active\": ";
   url += activeTemp() ? "\"N\"":"\"D\"";
   url += ",\"on\": ";
@@ -677,13 +720,10 @@ void ctSendLog()
 }
 
 // Send local IP on start for comm, or bad password attempt IP when caught
-void ctSendIP(bool local, uint32_t l)
+void ctSendIP(bool local, uint32_t ip)
 {
-  ip4 ip;
-  ip.l = l;
-
   String s = local ? "/s?waterbedIP=\"" : "/s?waterbedHackIP=\"";
-  s += ip.b.b[0]; s += ".";  s += ip.b.b[1]; s += ".";  s += ip.b.b[2]; s += "."; s += ip.b.b[3];
+  s += ipString(ip);
   s += "\"";
 
   ctSend(s);
