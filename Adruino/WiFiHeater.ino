@@ -33,7 +33,6 @@ SOFTWARE.
 #include "WiFiManager.h"
 #include <ESP8266WebServer.h>
 
-#define USEPIC // For PIC control
 const char *controlPassword = "yourpass"; // device password for modifying any settings
 const char *serverFile = "Waterbed";    // Creates /iot/Waterbed.php
 int serverPort = 80;                    // port fwd for fwdip.php
@@ -89,8 +88,8 @@ struct eeSet // EEPROM backed data
   uint16_t interval;
   uint16_t check; // or CRC
 };
-        // dsrv, prt, tz, day, nt    9AM,   8PM,  thresh 2.0, 5mins
-eeSet ee = { "", 80,  1, {950,980},  {9*60, 20*60}, 20,   5*60, 0xAAAA};
+        // dsrv, prt, tz, day, nt    9AM,   8PM, th 0.5, 10mins
+eeSet ee = { "", 80,  1, {950,980}, {9*60, 20*60}, 5,  10*60, 0xAAAA};
 
 uint8_t hour_save, sec_save;
 int ee_sum; // sum for checking if any setting has changed
@@ -125,6 +124,7 @@ void handleRoot() // Main webpage interface
   String password;
   int val;
   bool bUpdateTime = false;
+  bool ipSet = false;
   eeSet save;
   memcpy(&save, &ee, sizeof(ee));
 
@@ -167,6 +167,7 @@ void handleRoot() // Main webpage interface
             s.toCharArray(ee.dataServer, 64); // todo: parse into domain/URI
             Serial.print("Server ");
             Serial.println(ee.dataServer);
+            ipSet = true;
            }
            break;
       case 'p': // port
@@ -214,49 +215,63 @@ void handleRoot() // Main webpage interface
 
   checkLimits();
 
-  String page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
+  String page;
+  
+  if(ipSet) // if data IP being set, return local IP
+  {
+    page = "{\"ip\": \"";
+    page += ipString(WiFi.localIP());
+    page += ":";
+    page += serverPort;
+    page += "\"}";
+    server.send ( 200, "text/json", page );
+  }
+  else
+  {
+    page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
           "<title>WiFi Waterbed Heater</title>";
-  page += "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>";
-  page += "<body onload=\"{"
+    page += "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>";
+    page += "<body onload=\"{"
       "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
       "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;"
       "}\">";
 
-  page += "<h3>WiFi Waterbed Heater </h3>";
-  page += "<p>" + timeFmt(true, true);
-  page += " &nbsp&nbsp&nbsp&nbsp ";
-  page += sDec(currentTemp) + "&degF ";
-  page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
-  page += "</p>";
+    page += "<h3>WiFi Waterbed Heater </h3>";
+    page += "<p>" + timeFmt(true, true);
+    page += " &nbsp&nbsp&nbsp&nbsp ";
+    page += sDec(currentTemp) + "&degF ";
+    page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
+    page += "</p>";
   
-  page += "<table align=\"right\"><tr><td colspan=2 align=\"center\">";
-  page += (activeTemp()) ? "Day" : "<font color=\"red\"><b>Day</b></font>";
-  page += "</td>";
-  page += "<td colspan=2 align=\"center\">";
-  page += (activeTemp()) ? "<font color=\"red\"><b>Night</b></font>" : "Night";
-  page += "</td></tr><tr><td>";
-  page += button("DD", "Dn"); page += "</td><td>"; page += button("UD", "Up");
-  page += "</td><td>";
-  page += button("DN", "Dn");  page += "</td><td>"; page += button("UN", "Up");
-  page += "</td></tr><tr><td colspan=2>";
-  page += tempButton("TD", ee.setTemp[0] );  page += "</td><td colspan=2>"; page += tempButton("TN", ee.setTemp[1] );
-  page += "</td></tr><tr><td colspan=2>";
-  page += timeButton("SD", ee.timeSch[0]);  page += "</td><td colspan=2>";  page += timeButton("SN", ee.timeSch[1]);
-  page += "</td></tr><tr><td colspan=2 align=\"center\">Threshold</td><td colspan=2 align=\"center\">Timezone</td></tr>";
-  page += "<tr><td colspan=2>";
-  page += tempButton("H", ee.thresh);  page += "</td><td colspan=2>";  page += valButton("Z", String(ee.tz) );
-  page += "</td></tr></table>";
+    page += "<table align=\"right\"><tr><td colspan=2 align=\"center\">";
+    page += (activeTemp()) ? "Day" : "<font color=\"red\"><b>Day</b></font>";
+    page += "</td>";
+    page += "<td colspan=2 align=\"center\">";
+    page += (activeTemp()) ? "<font color=\"red\"><b>Night</b></font>" : "Night";
+    page += "</td></tr><tr><td>";
+    page += button("DD", "Dn"); page += "</td><td>"; page += button("UD", "Up");
+    page += "</td><td>";
+    page += button("DN", "Dn");  page += "</td><td>"; page += button("UN", "Up");
+    page += "</td></tr><tr><td colspan=2>";
+    page += tempButton("TD", ee.setTemp[0] );  page += "</td><td colspan=2>"; page += tempButton("TN", ee.setTemp[1] );
+    page += "</td></tr><tr><td colspan=2>";
+    page += timeButton("SD", ee.timeSch[0]);  page += "</td><td colspan=2>";  page += timeButton("SN", ee.timeSch[1]);
+    page += "</td></tr><tr><td colspan=2 align=\"center\">Threshold</td><td colspan=2 align=\"center\">Timezone</td></tr>";
+    page += "<tr><td colspan=2>";
+    page += tempButton("H", ee.thresh);  page += "</td><td colspan=2>";  page += valButton("Z", String(ee.tz) );
+    page += "</td></tr></table>";
 
-  page += "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">";
-  page += "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">";
-  page += "<br>Logged IP: ";
-  page += ipString(ip);
-  page += "<br></body></html>";
-
-  server.send ( 200, "text/html", page );
+    page += "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">";
+    page += "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">";
+    page += "<br>Logged IP: ";
+    page += ipString(ip);
+    page += "<br></body></html>";
+    server.send ( 200, "text/html", page );
+  }
 
   if(bUpdateTime)
     ctSetIp();
+
   digitalWrite(LED, LOW);
 }
 
@@ -325,18 +340,36 @@ String timeFmt(bool do_sec, bool do_12)
 }
 
 void handleS() { // /s?x=y can be redirected to index
+  Serial.println("handleS\n");
   handleRoot();
 }
 
 // Todo: JSON I/O
 void handleJson()
 {
-  String page = "OK";
+  Serial.println("handleJson\n");
+  String page = "{\"setTemp0\": ";
+  page += ee.setTemp[0];
+  page += ", \"setTemp1\": ";
+  page += ee.setTemp[1];
+  page += ", \"timeSch0\": ";
+  page += ee.timeSch[0];
+  page += ", \"timeSch1\": ";
+  page += ee.timeSch[1];
+  page += ", \"Threshold\": ";
+  page += ee.thresh;
+  page += ", \"temp\": ";
+  page += currentTemp;
+  page += ", \"on\": ";
+  page += bHeater;
+  page += "}";
   
-  server.send ( 200, "text/html", page );
+  server.send ( 200, "text/json", page );
 }
 
 void handleNotFound() {
+  Serial.println("handleNotFound\n");
+
   String message = "File Not Found\n\n";
   message += "URI: ";
   message += server.uri();
@@ -363,7 +396,7 @@ void setup()
   pinMode(HEARTBEAT, OUTPUT);
 
   digitalWrite(HEAT, HIGH); // high is off
-  digitalWrite(BEEP, LOW); // enable watchdog
+  digitalWrite(BEEP, HIGH); // disable watchdog
 
   // initialize dispaly
   display.init();
@@ -377,7 +410,7 @@ void setup()
   Serial.println();
   Serial.println();
 
-  bool bFound = wifi.findOpenAP(myHost); // Tries all open APs, then starts softAP mode for config
+  wifi.findOpenAP(myHost); // Tries all open APs, then starts softAP mode for config
   eeRead(); // don't access EE before WiFi init
 
   Serial.println("");
@@ -398,6 +431,12 @@ void setup()
   server.onNotFound ( handleNotFound );
   digitalWrite(HEARTBEAT, HIGH);
   server.begin();
+
+  digitalWrite(BEEP, LOW); // beep
+  digitalWrite(BEEP, HIGH);  // this gets past the initial beep wait
+  digitalWrite(BEEP, LOW);
+  digitalWrite(BEEP, HIGH);
+  digitalWrite(BEEP, LOW); // enable watchdog
 
   if( ds.search(ds_addr) )
   {
@@ -456,7 +495,6 @@ void loop()
         eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
       }
     }
-
     digitalWrite(HEARTBEAT, !digitalRead(HEARTBEAT));
   }
   DrawScreen();
@@ -479,8 +517,6 @@ void DrawScreen()
     display.drawString(80, 22, "Set");
     display.drawString(76, 55, activeTemp() ? "Night":" Day");
 
-//  display.setFontScale2x2(true);
-
     String s = timeFmt(true, true);
     s += "  ";
     s += dayShortStr(weekday());
@@ -495,9 +531,9 @@ void DrawScreen()
     int w = display.drawPropString(ind, 0, s );
     if( --ind < -(w)) ind = 0;
 
-    String temp = sDec(currentTemp) + ""; // <- that's a 0x7F
+    String temp = sDec(currentTemp) + "]"; // <- that's a degree
     display.drawPropString(2, 33, temp );
-    temp = sDec(ee.setTemp[activeTemp()]) + "";
+    temp = sDec(ee.setTemp[activeTemp()]) + "]";
     display.drawPropString(70, 33, temp );
   }
 /*
@@ -543,7 +579,7 @@ void checkTemp()
  
   uint8_t data[10];
   uint8_t present = ds.reset();
-  ds.select(ds_addr);    
+  ds.select(ds_addr);
   ds.write(0xBE);         // Read Scratchpad
 
   if(!present) return;
@@ -561,12 +597,12 @@ void checkTemp()
     return;
   }
   Serial.print("Temp: ");
-  Serial.print( (data[1] << 8) | data[0]);
+  uint16_t raw = (data[1] << 8) | data[0];
+  Serial.print( raw );
   Serial.print( " " );
 
-  int c = ((data[1] << 8) | data[0]) * 625;
-//  currentTemp = c / 1000;               // to 1 dec place celcius
-  int newTemp = ((c * 18) / 10000) + 320; // Fahreneit
+//  int newTemp = (( raw * 625) / 1000;  // to 10x celcius
+  int newTemp = ( (raw * 1125) + 320000) / 1000; // 10x fahrenheit
   if(newTemp > currentTemp + 100)
     Serial.println("Skipping strange reading");
   else currentTemp = newTemp;
@@ -574,14 +610,14 @@ void checkTemp()
 //  Serial.print("Temp: ");
 //  Serial.println(currentTemp);
 
-  if(currentTemp < ee.setTemp[activeTemp()] - ee.thresh && bHeater == false)
+  if(currentTemp <= ee.setTemp[activeTemp()] - ee.thresh && bHeater == false)
   {
     Serial.println("Heat on");
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
     ctSendLog(); // give a more precise account of changes
   }
-  else if(currentTemp > ee.setTemp[activeTemp()] && bHeater == true)
+  else if(currentTemp >= ee.setTemp[activeTemp()] && bHeater == true)
   {
     Serial.println("Heat off");
     bHeater = false;
@@ -599,6 +635,8 @@ void checkButtons()
   if(bUp != lbState[0]) debounce[0] = millis(); // reset on state change
   if(bDn != lbState[1]) debounce[1] = millis();
 
+#define REPEAT_DELAY 130
+
   if ((millis() - debounce[0]) > 20)
   {
     if (bUp != bState[0])
@@ -613,7 +651,7 @@ void checkButtons()
     }
     else if(bState[0] == LOW) // holding down
     {
-      if( (millis() - lRepeatMillis) > 150) // increase for slower repeat
+      if( (millis() - lRepeatMillis) > REPEAT_DELAY) // increase for slower repeat
       {
         changeTemp(1);
         lRepeatMillis = millis();
@@ -635,7 +673,7 @@ void checkButtons()
     }
     else if(bState[1] == LOW) // holding down
     {
-      if( (millis() - lRepeatMillis) > 150)
+      if( (millis() - lRepeatMillis) > REPEAT_DELAY)
       {
         changeTemp(-1);
         lRepeatMillis = millis();
@@ -657,7 +695,7 @@ void checkLimits()
 {
   ee.setTemp[0] = constrain(ee.setTemp[0], 600, 990); // sanity check
   ee.setTemp[1] = constrain(ee.setTemp[1], 600, 990); // 60 to 99F
-  ee.thresh = constrain(ee.thresh, 10, 100); // 1-10
+  ee.thresh = constrain(ee.thresh, 1, 100); // 0.1 to 10.0
 }
 
 void eeWrite() // write the settings if changed
@@ -724,6 +762,11 @@ void ctSendIP(bool local, uint32_t ip)
 {
   String s = local ? "/s?waterbedIP=\"" : "/s?waterbedHackIP=\"";
   s += ipString(ip);
+  if(local)
+  {
+    s += ":";
+    s += serverPort;
+  }
   s += "\"";
 
   ctSend(s);
