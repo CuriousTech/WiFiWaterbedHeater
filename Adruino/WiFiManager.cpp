@@ -89,7 +89,9 @@ String WiFiManager::getEEPROMString(int start, int len) {
     String string = "";
     for (int i = _eepromStart + start; i < _eepromStart + start + len; i++) {
         //DEBUG_PRINT(i);
-        string += char(EEPROM.read(i));
+        char c = char(EEPROM.read(i));
+        if(c == 0) break; // fix for 2.0.0
+        string += c;
     }
     return string;
 }
@@ -102,7 +104,6 @@ void WiFiManager::setEEPROMString(int start, int len, String string) {
             c = string[si];
 //            DEBUG_PRINT("Wrote: ");
 //            DEBUG_PRINT(c);
-            
         } else {
             c = 0;
         }
@@ -344,28 +345,35 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
     String sSSID = getSSID();
     int ind = 0;
 
+    Serial.print("Cfg SSID: ");
+    Serial.print(sSSID);
+    Serial.print(" ");
+    Serial.println(sSSID.length());
+
     display.setFontScale2x2(false);
     if (nScan == 0) {
         Serial.println( "No APs found" );
         display.print("No APs Found");
     }
     else {
-        for (int i = 0; i < nScan; ++i) // try each public AP
+        for (int i = 0; i < nScan; ++i) // Print each AP, count public ones
         {
             Serial.print(WiFi.SSID(i));
             Serial.print(" ");
-            Serial.println(WiFi.encryptionType(i));
-            display.print(WiFi.SSID(i));
+
             if(WiFi.encryptionType(i) == 7 /*&& strncmp(WiFi.SSID(i),"Chromecast",6) != 0*/)
             {
               display.drawString(128-8, 56, "O");
               nOpen++;
             }
-            else if( sSSID == WiFi.SSID(i) ){ // The saved WiFi was found
+            else if( sSSID == WiFi.SSID(i) ){ // The saved AP was found
               bFound  = true;
               display.drawString(128-8, 56, "<");
-              Serial.println(" Cfg AP found");
+              Serial.print("(Cfg) ");
             }
+
+            Serial.println(WiFi.encryptionType(i));
+            display.print(WiFi.SSID(i));
         }
   }
 
@@ -396,7 +404,9 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
         Serial.print("Attempting ");
         Serial.print(WiFi.SSID(i));
         display.print(String(WiFi.SSID(i)) + "...");
-        WiFi.begin(WiFi.SSID(i));
+        char szSSID[64];
+        WiFi.SSID(i).toCharArray(szSSID, 64); // fix for 2.0.0
+        WiFi.begin(szSSID);
         for(int n = 0; n < 50 && WiFi.status() != WL_CONNECTED; n++)
         {
           delay(200);
