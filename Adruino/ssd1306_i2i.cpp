@@ -150,43 +150,39 @@ void SSD1306::drawString(int x, int y, String text) {
   }
 }
 
+#define PropFont crystalclear_14ptFontInfo
 int SSD1306::drawPropString(int x, int y, String text)
 {
-  struct FONT_INFO font = crystalclear_14ptFontInfo;
- 
   for (int j=0; j < text.length(); j++)
   {
-    switch(text.charAt(j)) // Make numbers fixed for the scroller, and adjust spacing
-    {
-        case ' ': x += font.space_width + 1; continue; // skip spaces
-        case '0': x += 3; break;
-        case '1': x += 7; break;
-        case '3': x += 2; break;
-        case ':': x += 2; break;
+    switch(text.charAt(j)){
+      case ' ':  x += PropFont.space_width + 1; continue; // skip spaces
+      case '1':  x += 4; break;
     }
+    unsigned char ch = text.charAt(j) - PropFont.start_ch;
 
-    unsigned char ch = text.charAt(j) - font.start_ch;
-    if(ch > 58) ch--; // there's a char missing between Z and a?
-    int w = font.pInfo[ch].w;
-    const unsigned char *p = font.pBitmaps + font.pInfo[ch].offset;
+    uint16_t w = PropFont.pInfo[ch].w;
+    uint16_t offset = PropFont.pInfo[ch].offset;
+    const unsigned char *p = PropFont.pBitmaps + offset;
+
     int bytes = (w+7) >> 3;
-
-    for(int i = 0; i < font.height; i++)
+    for(int i = 0; i < PropFont.height; i++)
     {
       int x2 = x;
       for(int b = 0; b < bytes; b++)
       {
-        unsigned char charColumn = *p++;
+        unsigned char charColumn = pgm_read_byte(p++);
         for (int pixel = 0; pixel < 8; pixel++)
         {
           if (bitRead(charColumn, 7-pixel))
           {
-             setPixel(x2 + pixel,y + i);
+             setPixel(x2 + pixel, y + i);
           }
         }
         x2 += 8;
       }
     }
+
     x += w + 1;
   }
   return x; // return width used
