@@ -1,45 +1,8 @@
-/**The MIT License (MIT)
-
-Copyright (c) 2015 by Greg Cunningham, CuriousTech
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
-
-// PIC10F320 watchdog for WiFi Waterbed heater safety control and PWM buzzer output
-// Rev.1
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <xc.h>
-
-// PIC10F320 Configuration Bit Settings
-#pragma config FOSC = INTOSC    // Oscillator Selection bits (INTOSC oscillator: CLKIN function disabled)
-#pragma config BOREN = OFF      // Brown-out Reset Enable (Brown-out Reset disabled)
-#pragma config WDTE = SWDTEN    // Watchdog Timer Enable (WDT controlled by the SWDTEN bit in the WDTCON register)
-#pragma config PWRTE = OFF      // Power-up Timer Enable bit (PWRT disabled)
-#pragma config MCLRE = OFF      // MCLR Pin Function Select bit (MCLR pin function is digital input, MCLR internally tied to VDD)
-#pragma config CP = OFF         // Code Protection bit (Program memory code protection is disabled)
-#pragma config LVP = OFF        // Low-Voltage Programming Enable (High-voltage on MCLR/VPP must be used for programming)
-#pragma config LPBOR = OFF      // Brown-out Reset Selection bits (BOR disabled)
-#pragma config BORV = LO        // Brown-out Reset Voltage Selection (Brown-out Reset Voltage (Vbor), low trip point selected.)
-#pragma config WRT = OFF        // Flash Memory Self-Write Protection (Write protection off)
 
 #define PWM_OUT 	LATAbits.LATA0
 #define RESET_OUT	LATAbits.LATA1	// Heater
@@ -102,16 +65,22 @@ void main(void)
 
 	INTCONbits.TMR0IE = 1;
 	INTCONbits.IOCIE = 1;	// Int on change
-	INTCONbits.GIE = 1;	// Enable ints
+	INTCONbits.GIE = 1;		// Enable ints
 	INTCONbits.TMR0IF = 0;
-	IOCAF = 0;		// clear all pin interrupts
+	IOCAF = 0;				// clear all pin interrupts
 	TMR0 = 13;
 
 	WDTCON = 0b00010100;	// disabled
-	timer = 60*10;		// 10 minutes at powerup
+	timer = 60*10;			// 10 minutes at powerup
 	beep = false;
 	reset = false;
 
+	while(!beep);			// wait for initial false pulse
+
+	timer = 60*10;			// 10 minutes at powerup
+	beep = false;
+	reset = false;
+	
 	while(1)
 	{
 		if(reset)
@@ -127,6 +96,7 @@ void main(void)
 
 		if(beep)	// beep from the ESP
 		{
+			timer = 60*5;		// restart every 5 minutes if nothing happens
 			alarm();
 			beep = false;
 		}
