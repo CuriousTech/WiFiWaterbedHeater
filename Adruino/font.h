@@ -1,6 +1,28 @@
-// Just font stuff
+/**The MIT License (MIT)
 
-// 8pt font
+Copyright (c) 2015 by Daniel Eichhorn
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+See more at http://blog.squix.ch
+*/
+
 const char myFont[][8] PROGMEM = {  
 {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
 {0x00,0x00,0x5F,0x00,0x00,0x00,0x00,0x00},
@@ -105,16 +127,16 @@ const char myFont[][8] PROGMEM = {
 
 struct FONT_CHAR_INFO
 {
-  word w;   // width of char
-  word offset; // byte offset into bitmap data
+  word w;
+  word offset;
 };
 
 struct FONT_INFO
 {
-  unsigned char height; // font height.  Just count the rows.
-  unsigned char start_ch;  // First char on bitmap
-//  unsigned char end_ch;
-  unsigned char space_width; // Width of a space
+  unsigned char height;
+  unsigned char start_ch;
+  unsigned char end_ch;
+  unsigned char space_width;
   const FONT_CHAR_INFO *pInfo;
   const unsigned char *pBitmaps;
 };
@@ -124,7 +146,7 @@ struct FONT_INFO
 // 
 
 // Character bitmaps for Crystal clear 14pt
-const unsigned char crystalclear_14ptBitmaps[] = 
+const unsigned char crystalclear_14ptBitmaps[] PROGMEM = 
 {
   // @0 '!' (2 pixels wide)
   0x00, //   
@@ -2521,17 +2543,17 @@ const FONT_CHAR_INFO crystalclear_14ptDescriptors[] =
   {6, 368},     // - 
   {2, 391},     // . 
   {11, 414},    // / 
-  {9, 460},     // 0 
-  {5, 506},     // 1 
+  {12, 460},     // 0 
+  {8, 506},     // 1 
   {12, 529},    // 2 
-  {10, 575},    // 3 
+  {12, 575},    // 3 
   {12, 621},    // 4 
   {12, 667},    // 5 
   {12, 713},    // 6 
   {12, 759},    // 7 
   {12, 805},    // 8 
   {12, 851},    // 9 
-  {2, 897},     // : 
+  {4, 897},     // : 
   {2, 920},     // ; 
   {7, 943},     // < 
   {7, 966},     // = 
@@ -2565,8 +2587,9 @@ const FONT_CHAR_INFO crystalclear_14ptDescriptors[] =
   {12, 2231},     // Y 
   {11, 2277},     // Z 
   {5, 2323},    // [ 
-  {11, 2346},     // \ 
+  {11, 2346},     // there's the prob -> \ 
   {5, 2392},    // ] 
+  {6, 3680},    // ° 
   {8, 2415},    // ^ 
   {7, 2438},    // _ 
   {4, 2461},    // ` 
@@ -2600,7 +2623,6 @@ const FONT_CHAR_INFO crystalclear_14ptDescriptors[] =
   {2, 3588},    // | 
   {6, 3611},    // } 
   {10, 3634},     // ~ 
-  {6, 3680},    // ° (manually moved)
   {0, 0},     //  
   {0, 0},     //  
   {0, 0},     //  
@@ -2657,8 +2679,8 @@ const FONT_INFO crystalclear_14ptFontInfo =
 {
   23, //  Character height (manually changed)
   '!', //  Start character
-//  '°', //  End character (not used but deg causes error)
-  2, //  Width, in pixels, of space character
+  'Z', //  End character (not used but deg causes error)
+  3, //  Width, in pixels, of space character
   crystalclear_14ptDescriptors, //  Character descriptor array
   crystalclear_14ptBitmaps, //  Character bitmap array
 };
