@@ -33,12 +33,12 @@ SOFTWARE.
 #include "WiFiManager.h"
 #include <ESP8266WebServer.h>
 
-const char *controlPassword = "yourpass"; // device password for modifying any settings
+const char *controlPassword = "password"; // device password for modifying any settings
 const char *serverFile = "Waterbed";    // Creates /iot/Waterbed.php
 int serverPort = 80;                    // port fwd for fwdip.php
-const char *myHost = "www.yourdomain.com"; // server with fwdip.php on it
+const char *myHost = "www.yourdomain.com"; // php forwarding/time server
 
-union ip4
+union ip4 // a union for long <> 4 byte conversions
 {
   struct
   {
@@ -142,10 +142,10 @@ void handleRoot() // Main webpage interface
           password = s;
           break;
       case 'D': // DN or DD
-          ee.setTemp[ which ] -= 10;
+          ee.setTemp[ which ] -= 1; // -0.1
           break;
       case 'U': // UN or UD
-          ee.setTemp[ which ] += 10;
+          ee.setTemp[ which ] += 1;
           break;
       case 'T': // TN or TD direct set (?TD=95.0&key=password)
           ee.setTemp[ which ] = (uint16_t) (s.toFloat() * 10);
@@ -178,7 +178,7 @@ void handleRoot() // Main webpage interface
           ee.timeSch[ which ] = val;
           break;
       case 'O': // OLED
-          bDisplay_on = s.toInt() ? true:false;
+          bDisplay_on = (s == "ON") ? true:false;
           break;
       case 'A':   // Test the watchdog
           digitalWrite(BEEP, s.toInt() ? true:false);
@@ -259,6 +259,10 @@ void handleRoot() // Main webpage interface
     page += "</td></tr><tr><td colspan=2 align=\"center\">Threshold</td><td colspan=2 align=\"center\">Timezone</td></tr>";
     page += "<tr><td colspan=2>";
     page += tempButton("H", ee.thresh);  page += "</td><td colspan=2>";  page += valButton("Z", String(ee.tz) );
+    page += "</td></tr><tr><td align=\"right\">";
+    page += "OLED";
+    page += "</td><td align=\"left\">";
+    page += button("OLED", bDisplay_on ? "OFF":"ON" );
     page += "</td></tr></table>";
 
     page += "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">";
@@ -299,7 +303,7 @@ String tempButton(String id, int t) // temp and set buttons
   return valButton(id, s);
 }
 
-String sDec(int t)
+String sDec(int t) // just 123 to 12.3 string
 {
   String s = String( t / 10 ) + ".";
   s += t % 10;
@@ -316,11 +320,11 @@ String valButton(String id, String val)
   return s;
 }
 
-// Set sec to 60 to remove seconds
-String timeFmt(bool do_sec, bool do_12)
+// Time in hh:mm[:ss][AM/PM]
+String timeFmt(bool do_sec, bool do_M)
 {
   String r = "";
-  if(hourFormat12() <10) r = " ";
+  if(hourFormat12() < 10) r = " ";
   r += hourFormat12();
   r += ":";
   if(minute() < 10) r += "0";
@@ -332,7 +336,7 @@ String timeFmt(bool do_sec, bool do_12)
     r += second();
     r += " ";
   }
-  if(do_12)
+  if(do_M)
   {
       r += isPM() ? "PM":"AM";
   }
@@ -344,7 +348,7 @@ void handleS() { // /s?x=y can be redirected to index
   handleRoot();
 }
 
-// Todo: JSON I/O
+// Return lots of vars as JSON
 void handleJson()
 {
   Serial.println("handleJson\n");
@@ -401,9 +405,6 @@ void setup()
   // initialize dispaly
   display.init();
   digitalWrite(HEARTBEAT, LOW);
-
-  display.clear();
-  display.display();
 
   Serial.begin(115200);
 //  delay(3000);
@@ -491,7 +492,7 @@ void loop()
       if(--logCounter == 0)
       {
         logCounter = ee.interval;
-        ctSendLog();
+        ctSendLog(true);
         eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
       }
     }
@@ -510,14 +511,20 @@ void DrawScreen()
   // draw the screen here
   display.clear();
 
+  if( (millis() - last) > 400) // 400ms togle for blinker
+  {
+    last = millis();
+    b = !b;
+  }
+
   if(bDisplay_on) // draw only ON indicator if screen off
   {
-    display.setFontScale2x2(false);
+    display.setFontScale2x2(false); // the small text
     display.drawString( 8, 22, "Temp");
     display.drawString(80, 22, "Set");
     display.drawString(76, 55, activeTemp() ? "Night":" Day");
 
-    String s = timeFmt(true, true);
+    String s = timeFmt(true, true); // the scroller
     s += "  ";
     s += dayShortStr(weekday());
     s += " ";
@@ -528,35 +535,21 @@ void DrawScreen()
     int len = s.length();
     s = s + s;
 
-    int w = display.drawPropString(ind, 0, s );
+    int w = display.drawPropString(ind, 0, s ); // this returns the proportional text width
     if( --ind < -(w)) ind = 0;
 
-    String temp = sDec(currentTemp) + "]"; // <- that's a degree
+    String temp = sDec(currentTemp) + "]"; // <- that's a degree symbol
     display.drawPropString(2, 33, temp );
     temp = sDec(ee.setTemp[activeTemp()]) + "]";
     display.drawPropString(70, 33, temp );
+    if(bHeater && b)
+      display.drawString(1, 55, "Heat");
   }
-/*
-  if( (millis() - last) > 400) // blinky on indicator
+  else if(bHeater)  // small blinky dot when display is off
   {
-    last = millis();
-    b = !b;
+    const char *xbm = b ? active_bits : inactive_bits;
+    display.drawXbm(2, 56, 8, 8, active_bits);  // heater on indicator
   }
-  const char *xbm = (bHeater && b) ? active_bits : inactive_bits;
-  display.drawXbm(2, 56, 8, 8, xbm);  // heater on indicator
-*/
-
- if(bHeater) // wierd animated on indicator
- {
-    for(int y = 54;y < 64; y++)
-    {
-      for(int x = o2; x < 28; x += 8)
-        display.setPixel(x, y);
-      if((o2++) > 6) o2 = 0;
-    }
-    display.drawString(1, 55, "Heat");
- }
-
   display.display();
 }
 
@@ -576,13 +569,19 @@ void checkTemp()
   if(!bScratch || (millis() - read_scratch) < 1000) // conversion takes 750ms
     return;
   bScratch = false;
- 
+
   uint8_t data[10];
   uint8_t present = ds.reset();
   ds.select(ds_addr);
   ds.write(0xBE);         // Read Scratchpad
 
-  if(!present) return;
+  if(!present)      // safety
+  {
+    bHeater = false;
+    digitalWrite(HEAT, LOW);
+    ctSendLog(false);
+    return;
+  }
 
   for ( int i = 0; i < 9; i++) {           // we need 9 bytes
     data[i] = ds.read();
@@ -593,13 +592,13 @@ void checkTemp()
 
   if(OneWire::crc8( data, 8) != data[8])  // bad CRC
   {
+    bHeater = false;
+    digitalWrite(HEAT, LOW);
     Serial.println("Invalid CRC");
     return;
   }
-  Serial.print("Temp: ");
+
   uint16_t raw = (data[1] << 8) | data[0];
-  Serial.print( raw );
-  Serial.print( " " );
 
 //  int newTemp = (( raw * 625) / 1000;  // to 10x celcius
   int newTemp = ( (raw * 1125) + 320000) / 1000; // 10x fahrenheit
@@ -615,14 +614,14 @@ void checkTemp()
     Serial.println("Heat on");
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
-    ctSendLog(); // give a more precise account of changes
+    ctSendLog(true); // give a more precise account of changes
   }
   else if(currentTemp >= ee.setTemp[activeTemp()] && bHeater == true)
   {
     Serial.println("Heat off");
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
-    ctSendLog();
+    ctSendLog(true);
   }
 }
 
@@ -693,8 +692,8 @@ void changeTemp(int8_t delta)
 
 void checkLimits()
 {
-  ee.setTemp[0] = constrain(ee.setTemp[0], 600, 990); // sanity check
-  ee.setTemp[1] = constrain(ee.setTemp[1], 600, 990); // 60 to 99F
+  ee.setTemp[0] = constrain(ee.setTemp[0], 600, 900); // sanity check
+  ee.setTemp[1] = constrain(ee.setTemp[1], 600, 900); // 60 to 90F
   ee.thresh = constrain(ee.thresh, 1, 100); // 0.1 to 10.0
 }
 
@@ -743,7 +742,7 @@ bool activeTemp()
 }
 
 // Send logging data to a server.  This sends JSON formatted data to my local PC, but change to anything needed.
-void ctSendLog()
+void ctSendLog(bool ok)
 {
   String url = "/s?waterbedLog={\"temp\": ";
   url += sDec(currentTemp);
@@ -753,6 +752,8 @@ void ctSendLog()
   url += activeTemp() ? "\"N\"":"\"D\"";
   url += ",\"on\": ";
   url += bHeater;
+  url += ",\"ok\": ";
+  url += ok;
   url += "}";
   ctSend(url);
 }
