@@ -11,3 +11,8 @@ Display and web interface below.  It currently has a day / night setting for aut
 
 
 ![Slave](http://curioustech.net/images/wb_slave.png)
+
+
+It's live and logging as of Jan 5th.  The temp can shoot up if you slosh it around a bit, but overall it works quite well, and safer and has more features than what's on the market.  I'll work on efficiency when more data comes in.  
+
+![Log](http://curioustech.net/images/wb_hist1.png)
