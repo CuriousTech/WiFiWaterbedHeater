@@ -36,7 +36,7 @@ SOFTWARE.
 const char *controlPassword = "password"; // device password for modifying any settings
 const char *serverFile = "Waterbed";    // Creates /iot/Waterbed.php
 int serverPort = 80;                    // port fwd for fwdip.php
-const char *myHost = "www.yourdomain.com"; // php forwarding/time server
+const char *myHost = "www.yourdomain.com"; // php forwarding/time server (fwdip.php)
 
 union ip4 // a union for long <> 4 byte conversions
 {
@@ -77,31 +77,66 @@ ESP8266WebServer server( serverPort );
 
 int httpPort = 80; // may be modified by open AP scan
 
+struct Sched
+{
+  uint16_t setTemp;
+  uint16_t timeSch;
+  uint8_t thresh;
+  uint8_t wday;  // Todo: weekday 0=any, 1-7 = day of week
+};
+
+#define MAX_SCHED 8
+
 struct eeSet // EEPROM backed data
 {
-  char     dataServer[64];
-  uint8_t  dataServerPort; // may be modified by listener (dataHost)
-  int8_t   tz;            // Timezone offset from your server
-  uint16_t setTemp[2];
-  uint16_t timeSch[2];
-  uint16_t thresh;
-  uint16_t interval;
-  uint16_t check; // or CRC
+  uint16_t size;          // if size changes, use defauls
+  uint16_t sum;           // if sum is diiferent from memory struct, write
+  char     dataServer[32]; // server for logging
+  uint16_t interval;      // log inerval in seconds
+  uint16_t vacaTemp;       // vacation temp
+  uint8_t  dataServerPort; // log server port
+  int8_t   tz;            // Timezone offset from your global server
+  uint8_t  schedCnt;    // number of active scedules
+  uint8_t  bVaca;         // vacation enabled
+  uint8_t  bAvg;         // average target between schedules
+  uint8_t  resvd;
+  char     schNames[MAX_SCHED][16]; // 128  names for small display
+  Sched   schedule[MAX_SCHED];  // 48 bytes
 };
-        // dsrv, prt, tz, day, nt    9AM,   8PM, th 0.5, 10mins
-eeSet ee = { "", 80,  1, {950,980}, {9*60, 20*60}, 5,  10*60, 0xAAAA};
 
-uint8_t hour_save, sec_save;
-int ee_sum; // sum for checking if any setting has changed
+eeSet ee = {
+  sizeof(eeSet),
+  0xAAAA,
+  "", 5*60, 650, 83,     // dataServer, interval, vacation temp, port (i.e. "192.168.0.189", 5*60, 650, 83) 
+  2,                     // Timezone offset
+  2, 0,                  // active schedules, vacation mode
+  0, 0,                  // average, reserved
+  {"Morning", "Noon", "Day", "Night", "Sch5", "Sch6", "Sch7", "Sch8"},
+  {
+    {830,  0*60, 6, 0},  // temp, time, thresh, wday
+    {820,  6*60, 6, 0},
+    {820, 12*60, 6, 0},
+    {830, 18*60, 6, 0},
+    {830,  9*60, 6, 0},
+    {830,  9*60, 6, 0},
+    {830,  9*60, 6, 0},
+    {830,  9*60, 6, 0}
+  },
+};
+
+uint8_t hour_save, min_save, sec_save;
 
 bool bState[2];
 bool lbState[2];
 long debounce[2];
 long lRepeatMillis;
 int currentTemp = 999;
+int hiTemp; // current target
+int loTemp;
 bool bHeater = false;
 bool bNeedUpdate = true;
-int logCounter;
+int logCounter = 60;
+uint8_t schInd = 0;
 
 String ipString(long l)
 {
@@ -134,66 +169,78 @@ void handleRoot() // Main webpage interface
     server.arg(i).toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
     Serial.println( i + " " + server.argName ( i ) + ": " + s);
-    bool which = (tolower(server.argName(i).charAt(1) ) == 'n') ? 1:0;
+    int which = server.argName(i).charAt(1) - '0'; // limitation = 9
+    if(which >= MAX_SCHED) which = MAX_SCHED - 1; // safety
+    val = s.toInt();
+    bool b = (s == "ON") ? true:false;
 
     switch( server.argName(i).charAt(0)  )
     {
       case 'k': // key
           password = s;
           break;
-      case 'D': // DN or DD
-          ee.setTemp[ which ] -= 1; // -0.1
+      case 'D': // D0
+          ee.schedule[which].setTemp -= 1; // -0.1
           break;
-      case 'U': // UN or UD
-          ee.setTemp[ which ] += 1;
+      case 'U': // U0
+          ee.schedule[which].setTemp += 1;
           break;
-      case 'T': // TN or TD direct set (?TD=95.0&key=password)
-          ee.setTemp[ which ] = (uint16_t) (s.toFloat() * 10);
+      case 'C': // C 
+          ee.schedCnt = val;
+          if(ee.schedCnt > MAX_SCHED) ee.schedCnt = MAX_SCHED;
           break;
-      case 'H': // Threshold
-          ee.thresh = (uint16_t) (s.toFloat() * 10);
+      case 'T': // T0 direct set (?TD=95.0&key=password)
+          ee.schedule[which].setTemp = (uint16_t) (s.toFloat() * 10);
+          break;
+      case 'H': // H0 Threshold
+          ee.schedule[which].thresh = (uint16_t) (s.toFloat() * 10);
           break;
       case 'Z': // TZ
-          ee.tz = s.toInt();
+          ee.tz = val;
           bUpdateTime = true; // refresh current time
           break;
       case 'i': // ?ip=server&port=80&int=60&key=password (htTp://192.168.0.197:82/s?ip=192.168.0.189&port=81&int=600&key=password)
-          if(which) // interval
+          if(server.argName(i).charAt(1) == 'i') // interval
           {
-            ee.interval = s.toInt();
+            ee.interval = val;
           }
           else // ip
           {
-            s.toCharArray(ee.dataServer, 64); // todo: parse into domain/URI
+            s.toCharArray(ee.dataServer, sizeof(ee.dataServer));
             Serial.print("Server ");
             Serial.println(ee.dataServer);
             ipSet = true;
            }
            break;
       case 'p': // port
-          ee.dataServerPort = s.toInt();
+          ee.dataServerPort = val;
           break;
-      case 'S': // SN or SD
-          val = (s.toInt() * 60) + s.substring(s.indexOf(':')+1).toInt();
-          ee.timeSch[ which ] = val;
+      case 'S': // S0-7
+          if(s.indexOf(':') >= 0) // if :, otherwise raw minutes
+            val = (val * 60) + s.substring(s.indexOf(':')+1).toInt();
+          ee.schedule[which].timeSch = val;
           break;
       case 'O': // OLED
-          bDisplay_on = (s == "ON") ? true:false;
+          bDisplay_on = b;
           break;
-      case 'A':   // Test the watchdog
-          digitalWrite(BEEP, s.toInt() ? true:false);
+      case 'V':     // vacation V0/V1
+          if(which)
+            ee.bVaca = b;
+          else
+            ee.vacaTemp = (uint16_t) (s.toFloat() * 10);
+          break;
+      case 'A': // Average
+           ee.bAvg = b;
+           break;
+      case 'N': // name
+          s.toCharArray(ee.schNames[ which ], 15);
+          break;
+      case 'W':   // Test the watchdog
+          digitalWrite(BEEP, b);
           break;
       case 'B':   // for PIC programming
-          if(s.toInt())
-          {
-              pinMode(BEEP, OUTPUT);
-              pinMode(HEARTBEAT, OUTPUT);
-          }
-          else
-          {
-              pinMode(BEEP, INPUT);
-              pinMode(HEARTBEAT, INPUT);
-          }
+          pinMode(BEEP, b ? OUTPUT:INPUT);
+          pinMode(HEARTBEAT, b ? OUTPUT:INPUT);
           break;
     }
   }
@@ -213,7 +260,8 @@ void handleRoot() // Main webpage interface
   }
   lastIP = ip;
 
-  checkLimits();
+  checkLimits();      // constrain and check new values
+  checkSched(true);   // reconfigure to new schedule
 
   String page;
   
@@ -231,45 +279,63 @@ void handleRoot() // Main webpage interface
     page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
           "<title>WiFi Waterbed Heater</title>";
     page += "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>";
-    page += "<body onload=\"{"
+    page += "<body bgcolor=\"silver\" onload=\"{"
       "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
       "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;"
       "}\">";
 
-    page += "<h3>WiFi Waterbed Heater </h3>";
-    page += "<p>" + timeFmt(true, true);
-    page += " &nbsp&nbsp&nbsp&nbsp ";
+    page += "<h3>WiFi Waterbed Heater</h3>";
+
+    page += "<table align=\"right\">";
+    // Row 1
+    page += "<tr>";
+    page += "<td colspan=2>";
+    page += timeFmt(true, true);
+    page += "</td><td colspan=2>";
     page += sDec(currentTemp) + "&degF ";
     page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
-    page += "</p>";
-  
-    page += "<table align=\"right\"><tr><td colspan=2 align=\"center\">";
-    page += (activeTemp()) ? "Day" : "<font color=\"red\"><b>Day</b></font>";
-    page += "</td>";
-    page += "<td colspan=2 align=\"center\">";
-    page += (activeTemp()) ? "<font color=\"red\"><b>Night</b></font>" : "Night";
-    page += "</td></tr><tr><td>";
-    page += button("DD", "Dn"); page += "</td><td>"; page += button("UD", "Up");
-    page += "</td><td>";
-    page += button("DN", "Dn");  page += "</td><td>"; page += button("UN", "Up");
-    page += "</td></tr><tr><td colspan=2>";
-    page += tempButton("TD", ee.setTemp[0] );  page += "</td><td colspan=2>"; page += tempButton("TN", ee.setTemp[1] );
-    page += "</td></tr><tr><td colspan=2>";
-    page += timeButton("SD", ee.timeSch[0]);  page += "</td><td colspan=2>";  page += timeButton("SN", ee.timeSch[1]);
-    page += "</td></tr><tr><td colspan=2 align=\"center\">Threshold</td><td colspan=2 align=\"center\">Timezone</td></tr>";
+    page += "</td></tr>";
+    // Row 2
+    page += "<tr>";
+    page += "<td colspan=2>";
+    page += valButton("TZ ", "Z", String(ee.tz) );
+    page += "</td><td colspan=2>";
+    page += button("OLED ", "OLED", bDisplay_on ? "OFF":"ON" );
+    page += "</td></tr>";
+    // Row 3
     page += "<tr><td colspan=2>";
-    page += tempButton("H", ee.thresh);  page += "</td><td colspan=2>";  page += valButton("Z", String(ee.tz) );
-    page += "</td></tr><tr><td align=\"right\">";
-    page += "OLED";
-    page += "</td><td align=\"left\">";
-    page += button("OLED", bDisplay_on ? "OFF":"ON" );
-    page += "</td></tr></table>";
+    page += vacaForm();
+    page += "</td><td colspan=2>";
+    page += button("Avg ", "A", ee.bAvg ? "OFF":"ON" );
+    page += "</td></tr>";
+    // Row 4
+    page += "<tr>";
+    page += "<td colspan=2>";
+    page += button("Schedule ", "C", String((ee.schedCnt < MAX_SCHED) ? (ee.schedCnt+1):ee.schedCnt) );
+    page += button("Count ", "C", String((ee.schedCnt > 0) ? (ee.schedCnt-1):ee.schedCnt) );
+    page += "</td><td colspan=2>";
+    page += button("Temp ", "D" + String( schInd ), "Up");
+    page += button("Adjust ", "D" + String( schInd ), "Dn");
+    page += "</td></tr>";
+    // Row 5
+    page += "<tr><td align=\"left\">Time</td><td align=\"left\">Temp</td><td colspan=2 align=\"center\">Threshold</td></tr>";
+    // Row 6-(7~13)
+    for(int i = 0; i < ee.schedCnt; i++)
+    {
+      page += "<tr><td colspan=4";
+      if(i == schInd && !ee.bVaca)
+        page += " style=\"background-color:teal\""; // Highlight active schedule
+      page += ">";
+      page += schedForm(i);
+      page += "</td></tr>";
+    }
+    page += "</table>";
 
     page += "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">";
     page += "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">";
-    page += "<br>Logged IP: ";
+    page += "<br><small>Logged IP: ";
     page += ipString(ip);
-    page += "<br></body></html>";
+    page += "</small><br></body></html>";
     server.send ( 200, "text/html", page );
   }
 
@@ -279,28 +345,16 @@ void handleRoot() // Main webpage interface
   digitalWrite(LED, LOW);
 }
 
-String button(String id, String text) // Up/down buttons
+String button(String lbl, String id, String text) // Up/down buttons
 {
-  String s = "<form method='post' action='s'><input name='";
+  String s = "<form method='post' action='s'>";
+  s += lbl;
+  s += "<input name='";
   s += id;
   s += "' type='submit' value='";
   s += text;
   s += "'><input type=\"hidden\" name=\"key\" value=\"value\"></form>";
   return s;
-}
-
-String timeButton(String id, int t) // time and set buttons
-{
-  String s = String( t/60 ) + ":";
-  if((t%60) < 10) s += "0";
-  s += t%60;
-  return valButton(id, s);
-}
-
-String tempButton(String id, int t) // temp and set buttons
-{
-  String s = sDec(t) + "F";
-  return valButton(id, s);
 }
 
 String sDec(int t) // just 123 to 12.3 string
@@ -310,13 +364,56 @@ String sDec(int t) // just 123 to 12.3 string
   return s;
 }
 
-String valButton(String id, String val)
+String valButton(String lbl, String id, String val)
 {
-  String s = "<form method='post' action='s'><input name='";
+  String s = "<form method='post' action='s'>";
+  s += lbl;
+  s += "<input name='";
   s += id;
-  s += "' type=text size=4 value='";
+  s += "' type=text size=1 value='";
   s += val;
   s += "'><input type=\"hidden\" name=\"key\"><input value=\"Set\" type=submit></form>";
+  return s;
+}
+
+String schedForm(int sch)
+{
+  String s = "<form method='post' action='s'>";
+  s += " <input name='S"; // time
+  s += sch;
+  s += "' type=text size=4 value='";
+  int t = ee.schedule[sch].timeSch;
+  s += ( t/60 );
+  s += ":";
+  if((t%60) < 10) s += "0";
+  s += t%60;
+  s += "'> ";
+
+  s += "<input name='T"; // temp
+  s += sch;
+  s += "' type=text size=4 value='";
+  s += sDec(ee.schedule[sch].setTemp);
+  s += "F'> ";
+
+  s += "<input name='H"; // thresh
+  s += sch;
+  s += "' type=text size=4 value='";
+  s += sDec(ee.schedule[sch].thresh);
+  s += "F'> ";
+  
+  s += "<input type=\"hidden\" name=\"key\"><input value=\"Set\" type=submit> </form>";
+  return s;
+}
+
+String vacaForm(void)
+{
+  String s = "<form method='post' action='s'>";
+  s += "Vaca <input name='V0' type=text size=4 value='";
+  s += sDec(ee.vacaTemp);
+  s += "F'>";
+  s += "<input type=\"hidden\" name=\"key\"><input name='V1' value='";
+  s += ee.bVaca ? "OFF":"ON";
+  s += "' type=submit></form>";
   return s;
 }
 
@@ -352,22 +449,39 @@ void handleS() { // /s?x=y can be redirected to index
 void handleJson()
 {
   Serial.println("handleJson\n");
-  String page = "{\"setTemp0\": ";
-  page += ee.setTemp[0];
-  page += ", \"setTemp1\": ";
-  page += ee.setTemp[1];
-  page += ", \"timeSch0\": ";
-  page += ee.timeSch[0];
-  page += ", \"timeSch1\": ";
-  page += ee.timeSch[1];
-  page += ", \"Threshold\": ";
-  page += ee.thresh;
-  page += ", \"temp\": ";
-  page += currentTemp;
+  String page = "{";
+  for(int i = 0; i < 8; i++)
+  {
+    page += "\"setTemp";
+    page += i;
+    page += "\": ";
+    page += sDec(ee.schedule[i].setTemp);
+    page += ", ";
+    page += "\"timeSch";
+    page += i;
+    page += "\": ";
+    page += ee.schedule[i].timeSch;
+    page += ", ";
+    page += "\"Thresh";
+    page += i;
+    page += "\": ";
+    page += ee.schedule[i].thresh;
+    page += ", ";
+  }
+  page += "\"temp\": ";
+  page += sDec(currentTemp);
+  page += ", \"hiTemp\": ";
+  page += sDec(hiTemp);
+  page += ", \"loTemp\": ";
+  page += sDec(loTemp);
+  page += ", \"schInd\": ";
+  page += schInd;
+  page += ", \"schedCnt\": ";
+  page += ee.schedCnt;
   page += ", \"on\": ";
   page += bHeater;
   page += "}";
-  
+
   server.send ( 200, "text/json", page );
 }
 
@@ -456,7 +570,6 @@ void setup()
     Serial.println("No OneWire devices");
   }
 
-  logCounter = 60;
   ctSendIP(true, WiFi.localIP());
   digitalWrite(HEARTBEAT, LOW);
 }
@@ -473,17 +586,24 @@ void loop()
 
     checkTemp();
 
-    if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
+    if(min_save != minute()) // only do stuff once per minute
     {
-      display.init();
-      if( (hour_save = hour()) == 2)
-        bNeedUpdate = true;
+      min_save = minute();
+      checkSched(false);        // check every minute for next schedule
+      if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
+      {
+        display.init();
+        if( (hour_save = hour()) == 2)
+          bNeedUpdate = true;
+      }
     }
-
     if(bNeedUpdate)
       if( ctSetIp() )
+      {
         bNeedUpdate = false;
-
+        checkSched(true); // sync schedule to updated time
+      }
+   
     if(nWrongPass)
       nWrongPass--;
 
@@ -502,8 +622,7 @@ void loop()
 }
 
 int16_t ind;
-bool b = false;
-int o2 = 0;
+bool blnk = false;
 long last;
 
 void DrawScreen()
@@ -514,7 +633,7 @@ void DrawScreen()
   if( (millis() - last) > 400) // 400ms togle for blinker
   {
     last = millis();
-    b = !b;
+    blnk = !blnk;
   }
 
   if(bDisplay_on) // draw only ON indicator if screen off
@@ -522,7 +641,7 @@ void DrawScreen()
     display.setFontScale2x2(false); // the small text
     display.drawString( 8, 22, "Temp");
     display.drawString(80, 22, "Set");
-    display.drawString(76, 55, activeTemp() ? "Night":" Day");
+    display.drawString(76, 55, ee.bVaca ? "Vacation" : ee.schNames[schInd]);
 
     String s = timeFmt(true, true); // the scroller
     s += "  ";
@@ -540,14 +659,14 @@ void DrawScreen()
 
     String temp = sDec(currentTemp) + "]"; // <- that's a degree symbol
     display.drawPropString(2, 33, temp );
-    temp = sDec(ee.setTemp[activeTemp()]) + "]";
+    temp = sDec(ee.schedule[schInd].setTemp) + "]";
     display.drawPropString(70, 33, temp );
-    if(bHeater && b)
+    if(bHeater && blnk)
       display.drawString(1, 55, "Heat");
   }
   else if(bHeater)  // small blinky dot when display is off
   {
-    const char *xbm = b ? active_bits : inactive_bits;
+    const char *xbm = blnk ? active_bits : inactive_bits;
     display.drawXbm(2, 56, 8, 8, active_bits);  // heater on indicator
   }
   display.display();
@@ -579,7 +698,7 @@ void checkTemp()
   {
     bHeater = false;
     digitalWrite(HEAT, LOW);
-    ctSendLog(false);
+//    ctSendLog(false);
     return;
   }
 
@@ -609,14 +728,41 @@ void checkTemp()
 //  Serial.print("Temp: ");
 //  Serial.println(currentTemp);
 
-  if(currentTemp <= ee.setTemp[activeTemp()] - ee.thresh && bHeater == false)
+  hiTemp = ee.bVaca ? ee.vacaTemp : ee.schedule[schInd].setTemp;
+  loTemp = ee.bVaca ? (hiTemp - 10) : (hiTemp - ee.schedule[schInd].thresh);
+  int thresh = ee.schedule[schInd].thresh;
+ 
+  if(!ee.bVaca && ee.bAvg) // averageing mode
+  {
+    int start = ee.schedule[schInd].timeSch;
+    int range;
+    int s2;
+
+    if(schInd == ee.schedCnt - 1) // rollover
+    {
+      s2 = 0;
+      range = ee.schedule[s2].timeSch + (24*60) - start;
+    }
+    else
+    {
+      s2 = schInd + 1;
+      range = ee.schedule[s2].timeSch - start;
+    }
+
+    int m = (hour() * 60) + minute() - start;
+    hiTemp = tween(ee.schedule[schInd].setTemp, ee.schedule[s2].setTemp, m, range);
+    thresh = tween(ee.schedule[schInd].thresh, ee.schedule[s2].thresh, m, range);
+    loTemp = hiTemp - thresh;
+  }
+
+  if(currentTemp <= loTemp && bHeater == false)
   {
     Serial.println("Heat on");
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
     ctSendLog(true); // give a more precise account of changes
   }
-  else if(currentTemp >= ee.setTemp[activeTemp()] && bHeater == true)
+  else if(currentTemp >= hiTemp && bHeater == true)
   {
     Serial.println("Heat off");
     bHeater = false;
@@ -624,6 +770,17 @@ void checkTemp()
     ctSendLog(true);
   }
 }
+
+// avarge value at current minute between times
+int tween(int8_t t1, int8_t t2, int m, int range)
+{
+  if(range == 0) range = 1; // div by zero check
+  if(range < 0) range = -range; // make range positive
+  double t = (double)(t2 - t1) * (m * 100 / range) / 100;
+  return (int)(t + t1);
+}
+
+// todo: B-spline the tween
 
 // Check the buttons
 void checkButtons()
@@ -686,37 +843,42 @@ void checkButtons()
 
 void changeTemp(int8_t delta)
 {
-  ee.setTemp[activeTemp()] += delta;
+  ee.schedule[schInd].setTemp += delta;
   checkLimits();
 }
 
 void checkLimits()
 {
-  ee.setTemp[0] = constrain(ee.setTemp[0], 600, 900); // sanity check
-  ee.setTemp[1] = constrain(ee.setTemp[1], 600, 900); // 60 to 90F
-  ee.thresh = constrain(ee.thresh, 1, 100); // 0.1 to 10.0
+  for(int i = 0; i < ee.schedCnt; i++)
+  {
+    ee.schedule[i].setTemp = constrain(ee.schedule[i].setTemp, 600, 900); // sanity check
+    ee.schedule[i].thresh = constrain(ee.schedule[i].thresh, 1, 100); // sanity check
+  }
 }
 
 void eeWrite() // write the settings if changed
 {
-  uint16_t sum = Fletcher16((uint8_t *)&ee, sizeof(eeSet));
+  uint16_t old_sum = ee.sum;
+  ee.sum = 0;
+  ee.sum = Fletcher16((uint8_t *)&ee, sizeof(eeSet));
 
-  if(sum == ee_sum){
+  if(old_sum == ee.sum)
     return; // Nothing has changed?
-  }
-  ee_sum = sum;
+
   wifi.eeWriteData(64, (uint8_t*)&ee, sizeof(ee)); // WiFiManager already has an instance open, so use that at offset 64+
 }
 
 void eeRead()
 {
-  uint8_t addr = 64;
   eeSet eeTest;
 
   wifi.eeReadData(64, (uint8_t*)&eeTest, sizeof(eeSet));
-  if(eeTest.check != 0xAAAA) return; // Probably only the first read or if struct size changes
+  if(eeTest.size != sizeof(eeSet)) return; // revert to defaults if struct size changes
+  uint16_t sum = eeTest.sum;
+  eeTest.sum = 0;
+  eeTest.sum = Fletcher16((uint8_t *)&eeTest, sizeof(eeSet));
+  if(eeTest.sum != sum) return; // revert to defaults if struct size changes
   memcpy(&ee, &eeTest, sizeof(eeSet));
-  ee_sum = Fletcher16((uint8_t *)&ee, sizeof(eeSet));
 }
 
 uint16_t Fletcher16( uint8_t* data, int count)
@@ -733,29 +895,50 @@ uint16_t Fletcher16( uint8_t* data, int count)
    return (sum2 << 8) | sum1;
 }
 
-// Returns the temp setting active in current time range
-bool activeTemp()
+void checkSched(bool bUpdate)
 {
   time_t t = now();
   long timeNow = (hour(t)*60) + minute(t);
-  return (timeNow >= ee.timeSch[0] && timeNow < ee.timeSch[1]) ? 0:1;
+
+  if(bUpdate)
+  {
+    int i;
+    for(i = 0; i < ee.schedCnt; i++) // any time check
+      if(timeNow >= ee.schedule[i].timeSch && timeNow < ee.schedule[i+1].timeSch)
+        break;
+    schInd = i;
+  }
+  else for(int i = 0; i < ee.schedCnt; i++) // on-time check
+  {
+    if(timeNow == ee.schedule[i].timeSch)
+    {
+      schInd = i;
+      break;
+    }
+  }
 }
 
 // Send logging data to a server.  This sends JSON formatted data to my local PC, but change to anything needed.
 void ctSendLog(bool ok)
 {
-  String url = "/s?waterbedLog={\"temp\": ";
-  url += sDec(currentTemp);
-  url += ",\"setTemp\": ";
-  url += sDec(ee.setTemp[activeTemp()]);
-  url += ",\"active\": ";
-  url += activeTemp() ? "\"N\"":"\"D\"";
-  url += ",\"on\": ";
-  url += bHeater;
-  url += ",\"ok\": ";
-  url += ok;
-  url += "}";
-  ctSend(url);
+  String s = "/s?waterbedLog={\"temp\": ";
+  s += sDec(currentTemp);
+  s += ",\"setTemp\": ";
+  s += sDec(ee.schedule[schInd].setTemp);
+  s += ",\"schInd\": ";
+  s += schInd;
+  s += ",\"thresh\": ";
+  s += sDec(ee.schedule[schInd].thresh);
+  s += ",\"hiTemp\": ";
+  s += sDec(hiTemp);
+  s += ",\"loTemp\": ";
+  s += sDec(loTemp);
+  s += ",\"on\": ";
+  s += bHeater;
+  s += ",\"ok\": ";
+  s += ok;
+  s += "}";
+  ctSend(s);
 }
 
 // Send local IP on start for comm, or bad password attempt IP when caught
@@ -776,10 +959,16 @@ void ctSendIP(bool local, uint32_t ip)
 // Send stuff to a server.
 void ctSend(String s)
 {
-  if(ee.dataServer[0] == 0) return;
+  if(ee.dataServer[0] == 0){
+    Serial.println("No dataServer");
+    return;
+  }
   WiFiClient client;
   if (!client.connect(ee.dataServer, ee.dataServerPort)) {
     Serial.println("dataServer connection failed");
+    Serial.print(ee.dataServer);
+    Serial.print(":");
+    Serial.println(ee.dataServerPort);
     delay(100);
     return;
   }
