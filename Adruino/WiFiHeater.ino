@@ -902,11 +902,13 @@ void checkSched(bool bUpdate)
 
   if(bUpdate)
   {
-    int i;
-    for(i = 0; i < ee.schedCnt; i++) // any time check
+    schInd = ee.schedCnt - 1;
+    for(int i = 0; i < ee.schedCnt; i++) // any time check
       if(timeNow >= ee.schedule[i].timeSch && timeNow < ee.schedule[i+1].timeSch)
+      {
+        schInd = i;
         break;
-    schInd = i;
+      }
   }
   else for(int i = 0; i < ee.schedCnt; i++) // on-time check
   {
