@@ -250,12 +250,12 @@ void handleRoot() // Main webpage interface
   if(server.args() && (password != controlPassword) )
   {
     memcpy(&ee, &save, sizeof(ee)); // undo any changes
-    if(nWrongPass < 4)
-      nWrongPass = 4;
-    else if((nWrongPass & 0xFFFFF000) == 0 ) // time doubles for every wrong password attempt.  Max 1 hour
+    if(nWrongPass == 0)
+      nWrongPass = 10;
+    else if((nWrongPass & 0xFFFFF000) == 0 ) // time doubles for every high speed wrong password attempt.  Max 1 hour
       nWrongPass <<= 1;
     if(ip != lastIP)  // if different IP drop it down
-       nWrongPass = 4;
+       nWrongPass = 10;
     ctSendIP(false, ip); // log attempts
   }
   lastIP = ip;
@@ -277,48 +277,46 @@ void handleRoot() // Main webpage interface
   else
   {
     page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
-          "<title>WiFi Waterbed Heater</title>";
-    page += "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>";
-    page += "<body bgcolor=\"silver\" onload=\"{"
-      "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
-      "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;"
-      "}\">";
-
-    page += "<h3>WiFi Waterbed Heater</h3>";
-
-    page += "<table align=\"right\">";
+          "<title>WiFi Waterbed Heater</title>"
+          "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
+          "<body bgcolor=\"silver\" onload=\"{"
+          "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
+          "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;"
+          "}\">"
+          "<h3>WiFi Waterbed Heater</h3>"
+          "<table align=\"right\">";
     // Row 1
-    page += "<tr>";
-    page += "<td colspan=2>";
+    page += "<tr>"
+            "<td colspan=2>";
     page += timeFmt(true, true);
     page += "</td><td colspan=2>";
     page += sDec(currentTemp) + "&degF ";
     page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
-    page += "</td></tr>";
+    page += "</td></tr>"
     // Row 2
-    page += "<tr>";
-    page += "<td colspan=2>";
+            "<tr>"
+            "<td colspan=2>";
     page += valButton("TZ ", "Z", String(ee.tz) );
     page += "</td><td colspan=2>";
     page += button("OLED ", "OLED", bDisplay_on ? "OFF":"ON" );
-    page += "</td></tr>";
+    page += "</td></tr>"
     // Row 3
-    page += "<tr><td colspan=2>";
+            "<tr><td colspan=2>";
     page += vacaForm();
     page += "</td><td colspan=2>";
     page += button("Avg ", "A", ee.bAvg ? "OFF":"ON" );
-    page += "</td></tr>";
+    page += "</td></tr>"
     // Row 4
-    page += "<tr>";
-    page += "<td colspan=2>";
+            "<tr>"
+            "<td colspan=2>";
     page += button("Schedule ", "C", String((ee.schedCnt < MAX_SCHED) ? (ee.schedCnt+1):ee.schedCnt) );
     page += button("Count ", "C", String((ee.schedCnt > 0) ? (ee.schedCnt-1):ee.schedCnt) );
     page += "</td><td colspan=2>";
     page += button("Temp ", "D" + String( schInd ), "Up");
     page += button("Adjust ", "D" + String( schInd ), "Dn");
-    page += "</td></tr>";
+    page += "</td></tr>"
     // Row 5
-    page += "<tr><td align=\"left\">Time</td><td align=\"left\">Temp</td><td colspan=2 align=\"center\">Threshold</td></tr>";
+            "<tr><td align=\"left\">Time</td><td align=\"left\">Temp</td><td colspan=2 align=\"left\">Threshold</td></tr>";
     // Row 6-(7~13)
     for(int i = 0; i < ee.schedCnt; i++)
     {
@@ -329,11 +327,11 @@ void handleRoot() // Main webpage interface
       page += schedForm(i);
       page += "</td></tr>";
     }
-    page += "</table>";
+    page += "</table>"
 
-    page += "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">";
-    page += "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">";
-    page += "<br><small>Logged IP: ";
+            "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">"
+            "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
+            "<br><small>Logged IP: ";
     page += ipString(ip);
     page += "</small><br></body></html>";
     server.send ( 200, "text/html", page );
@@ -465,7 +463,7 @@ void handleJson()
     page += "\"Thresh";
     page += i;
     page += "\": ";
-    page += ee.schedule[i].thresh;
+    page += sDec(ee.schedule[i].thresh);
     page += ", ";
   }
   page += "\"temp\": ";
@@ -641,7 +639,8 @@ void DrawScreen()
     display.setFontScale2x2(false); // the small text
     display.drawString( 8, 22, "Temp");
     display.drawString(80, 22, "Set");
-    display.drawString(76, 55, ee.bVaca ? "Vacation" : ee.schNames[schInd]);
+    const char *ps = ee.bVaca ? "Vacation" : ee.schNames[schInd];
+    display.drawString(90-(strlen(ps) << 2), 55, ps);
 
     String s = timeFmt(true, true); // the scroller
     s += "  ";
@@ -738,6 +737,7 @@ void checkTemp()
     int range;
     int s2;
 
+    // Find minute range between schedules
     if(schInd == ee.schedCnt - 1) // rollover
     {
       s2 = 0;
@@ -749,7 +749,13 @@ void checkTemp()
       range = ee.schedule[s2].timeSch - start;
     }
 
-    int m = (hour() * 60) + minute() - start;
+    int m = ((hour() * 60) + minute()); // current TOD in minutes
+
+    if(m < start) // offset by start of current schedule
+      m -= start - (24*60); // rollover
+    else
+      m -= start;
+
     hiTemp = tween(ee.schedule[schInd].setTemp, ee.schedule[s2].setTemp, m, range);
     thresh = tween(ee.schedule[schInd].thresh, ee.schedule[s2].thresh, m, range);
     loTemp = hiTemp - thresh;
@@ -772,12 +778,11 @@ void checkTemp()
 }
 
 // avarge value at current minute between times
-int tween(int8_t t1, int8_t t2, int m, int range)
+int tween(int t1, int t2, int m, int range)
 {
   if(range == 0) range = 1; // div by zero check
-  if(range < 0) range = -range; // make range positive
-  double t = (double)(t2 - t1) * (m * 100 / range) / 100;
-  return (int)(t + t1);
+  int t = (t2 - t1) * (m * 100 / range) / 100;
+  return t + t1;
 }
 
 // todo: B-spline the tween
