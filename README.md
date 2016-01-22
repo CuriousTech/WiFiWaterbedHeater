@@ -15,4 +15,9 @@ Display and web interface below.  Waterbed.ino history before 1/16/2016 had a da
 
 It's live and logging as of Jan 5th.  The temp can shoot up if you slosh it around a bit, but overall it works quite well, and safer and has more features than what's on the market.  I'll work on efficiency when more data comes in.  
 
+Simple schedule  
 ![Log](http://curioustech.net/images/wb_hist1.png)
+
+Averaged schedule, then flat schedule  
+
+![Log2](http://curioustech.net/images/wb_hist.png)
