@@ -107,10 +107,9 @@ struct eeSet // EEPROM backed data
 eeSet ee = {
   sizeof(eeSet),
   0xAAAA,
-  "", 5*60, 650, 83,     // dataServer, interval, vacation temp, port (i.e. "192.168.0.189", 5*60, 650, 83) 
-  2,                     // Timezone offset
-  2, 0,                  // active schedules, vacation mode
-  0, 0,                  // average, reserved
+  "192.168.0.189", 5*60, 650, 83, 2, // dataServer, vacTemp, interval, port, TZ
+  2, 0,                   // active schedules, vacation mode
+  0, 0,                   // average, reserved
   {"Morning", "Noon", "Day", "Night", "Sch5", "Sch6", "Sch7", "Sch8"},
   {
     {830,  0*60, 6, 0},  // temp, time, thresh, wday
@@ -200,16 +199,17 @@ void handleRoot() // Main webpage interface
           bUpdateTime = true; // refresh current time
           break;
       case 'i': // ?ip=server&port=80&int=60&key=password (htTp://192.168.0.197:82/s?ip=192.168.0.189&port=81&int=600&key=password)
-          if(server.argName(i).charAt(1) == 'i') // interval
+          switch(server.argName(i).charAt(1))
           {
-            ee.interval = val;
-          }
-          else // ip
-          {
-            s.toCharArray(ee.dataServer, sizeof(ee.dataServer));
-            Serial.print("Server ");
-            Serial.println(ee.dataServer);
-            ipSet = true;
+            case 'n': // interval
+              ee.interval = val;
+              break;
+            case 'p': //ip
+              s.toCharArray(ee.dataServer, sizeof(ee.dataServer));
+              Serial.print("Server ");
+              Serial.println(ee.dataServer);
+              ipSet = true;
+              break;
            }
            break;
       case 'p': // port
@@ -312,7 +312,7 @@ void handleRoot() // Main webpage interface
     page += button("Schedule ", "C", String((ee.schedCnt < MAX_SCHED) ? (ee.schedCnt+1):ee.schedCnt) );
     page += button("Count ", "C", String((ee.schedCnt > 0) ? (ee.schedCnt-1):ee.schedCnt) );
     page += "</td><td colspan=2>";
-    page += button("Temp ", "D" + String( schInd ), "Up");
+    page += button("Temp ", "U" + String( schInd ), "Up");
     page += button("Adjust ", "D" + String( schInd ), "Dn");
     page += "</td></tr>"
     // Row 5
@@ -882,7 +882,7 @@ void eeRead()
   uint16_t sum = eeTest.sum;
   eeTest.sum = 0;
   eeTest.sum = Fletcher16((uint8_t *)&eeTest, sizeof(eeSet));
-  if(eeTest.sum != sum) return; // revert to defaults if struct size changes
+  if(eeTest.sum != sum) return; // revert to defaults if sum fails
   memcpy(&ee, &eeTest, sizeof(eeSet));
 }
 
