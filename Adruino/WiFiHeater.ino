@@ -35,8 +35,8 @@ SOFTWARE.
 
 const char *controlPassword = "password"; // device password for modifying any settings
 const char *serverFile = "Waterbed";    // Creates /iot/Waterbed.php
-int serverPort = 80;                    // port fwd for fwdip.php
-const char *myHost = "www.yourdomain.com"; // php forwarding/time server (fwdip.php)
+int serverPort = 82;                    // port fwd for fwdip.php
+const char *myHost = "www.yourdomain.com"; // php forwarding/time server
 
 union ip4 // a union for long <> 4 byte conversions
 {
@@ -665,8 +665,10 @@ void DrawScreen()
   }
   else if(bHeater)  // small blinky dot when display is off
   {
-    const char *xbm = blnk ? active_bits : inactive_bits;
-    display.drawXbm(2, 56, 8, 8, active_bits);  // heater on indicator
+//    const char *xbm = blnk ? active_bits : inactive_bits;
+//    display.drawXbm(2, 56, 8, 8, xbm);  // heater on indicator
+
+    if(blnk) display.drawString( 2, 56, ".");
   }
   display.display();
 }
