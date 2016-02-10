@@ -181,7 +181,8 @@ void WiFiManager::startWebConfig() {
 }
 
 String WiFiManager::beginConfigMode(void) {
-    
+
+    WiFi.mode(WIFI_AP);
     WiFi.softAP(_apName);
     DEBUG_PRINT("Started Soft Access Point");
     display.print("AP started:");
