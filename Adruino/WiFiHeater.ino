@@ -32,20 +32,16 @@ SOFTWARE.
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
 #include <ESP8266WebServer.h>
+#include <WiFiUdp.h>
 
 const char *controlPassword = "password"; // device password for modifying any settings
 const char *serverFile = "Waterbed";    // Creates /iot/Waterbed.php
 int serverPort = 82;                    // port fwd for fwdip.php
-const char *myHost = "www.yourdomain.com"; // php forwarding/time server
+const char *myHost = "www.yourdomain.com"; // php forwarding/time server (fwdip.php)
 
-union ip4 // a union for long <> 4 byte conversions
-{
-  struct
-  {
-    uint8_t b[4];
-  } b;
-  uint32_t l;
-};
+const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
+byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+WiFiUDP Udp;
 
 extern "C" {
   #include "user_interface.h" // Needed for deepSleep which isn't used
@@ -137,17 +133,15 @@ bool bNeedUpdate = true;
 int logCounter = 60;
 uint8_t schInd = 0;
 
-String ipString(long l)
+String ipString(IPAddress ip) // Convert IP to string
 {
-  ip4 ip;
-  ip.l = l;
-  String sip = String(ip.b.b[0]);
+  String sip = String(ip[0]);
   sip += ".";
-  sip += ip.b.b[1];
+  sip += ip[1];
   sip += ".";
-  sip += ip.b.b[2];
+  sip += ip[2];
   sip += ".";
-  sip += ip.b.b[3];
+  sip += ip[3];
   return sip;
 }
 
@@ -249,7 +243,6 @@ void handleRoot() // Main webpage interface
 
   if(server.args() && (password != controlPassword) )
   {
-    memcpy(&ee, &save, sizeof(ee)); // undo any changes
     if(nWrongPass == 0)
       nWrongPass = 10;
     else if((nWrongPass & 0xFFFFF000) == 0 ) // time doubles for every high speed wrong password attempt.  Max 1 hour
@@ -258,6 +251,9 @@ void handleRoot() // Main webpage interface
        nWrongPass = 10;
     ctSendIP(false, ip); // log attempts
   }
+
+  if(nWrongPass) memcpy(&ee, &save, sizeof(ee)); // undo any changes
+
   lastIP = ip;
 
   checkLimits();      // constrain and check new values
@@ -278,7 +274,7 @@ void handleRoot() // Main webpage interface
   {
     page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
           "<title>WiFi Waterbed Heater</title>"
-          "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
+          "<style>div,input {margin-bottom: 5px;}body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
           "<body bgcolor=\"silver\" onload=\"{"
           "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
           "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;"
@@ -316,7 +312,7 @@ void handleRoot() // Main webpage interface
     page += button("Adjust ", "D" + String( schInd ), "Dn");
     page += "</td></tr>"
     // Row 5
-            "<tr><td align=\"left\">Time</td><td align=\"left\">Temp</td><td colspan=2 align=\"left\">Threshold</td></tr>";
+            "<tr><td align=\"left\">Name</td><td align=\"left\">Time</td><td align=\"left\">Temp</td><td width=\"100px\" align=\"left\">Threshold</td></tr>";
     // Row 6-(7~13)
     for(int i = 0; i < ee.schedCnt; i++)
     {
@@ -327,13 +323,14 @@ void handleRoot() // Main webpage interface
       page += schedForm(i);
       page += "</td></tr>";
     }
-    page += "</table>"
-
-            "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">"
-            "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
-            "<br><small>Logged IP: ";
+    page += "<tr><td colspan=2><small>IP: ";
     page += ipString(ip);
-    page += "</small><br></body></html>";
+    page += "</small></td><td colspan=2>"
+            "<input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 90px\">"
+            "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
+            "</td></tr>"
+            "</table>"
+            "</body></html>";
     server.send ( 200, "text/html", page );
   }
 
@@ -345,7 +342,7 @@ void handleRoot() // Main webpage interface
 
 String button(String lbl, String id, String text) // Up/down buttons
 {
-  String s = "<form method='post' action='s'>";
+  String s = "<form method='post'>";
   s += lbl;
   s += "<input name='";
   s += id;
@@ -364,7 +361,7 @@ String sDec(int t) // just 123 to 12.3 string
 
 String valButton(String lbl, String id, String val)
 {
-  String s = "<form method='post' action='s'>";
+  String s = "<form method='post'>";
   s += lbl;
   s += "<input name='";
   s += id;
@@ -376,10 +373,17 @@ String valButton(String lbl, String id, String val)
 
 String schedForm(int sch)
 {
-  String s = "<form method='post' action='s'>";
+  String s = "<form method='post'>";
+
+  s += "<input name='N"; // name
+  s += sch;
+  s += "' type=text size=5 value='";
+  s += ee.schNames[sch];
+  s += "'> ";
+
   s += " <input name='S"; // time
   s += sch;
-  s += "' type=text size=4 value='";
+  s += "' type=text size=3 value='";
   int t = ee.schedule[sch].timeSch;
   s += ( t/60 );
   s += ":";
@@ -389,13 +393,13 @@ String schedForm(int sch)
 
   s += "<input name='T"; // temp
   s += sch;
-  s += "' type=text size=4 value='";
+  s += "' type=text size=3 value='";
   s += sDec(ee.schedule[sch].setTemp);
   s += "F'> ";
 
   s += "<input name='H"; // thresh
   s += sch;
-  s += "' type=text size=4 value='";
+  s += "' type=text size=2 value='";
   s += sDec(ee.schedule[sch].thresh);
   s += "F'> ";
   
@@ -405,7 +409,7 @@ String schedForm(int sch)
 
 String vacaForm(void)
 {
-  String s = "<form method='post' action='s'>";
+  String s = "<form method='post'>";
   s += "Vaca <input name='V0' type=text size=4 value='";
   s += sDec(ee.vacaTemp);
   s += "F'>";
@@ -448,6 +452,11 @@ void handleJson()
 {
   Serial.println("handleJson\n");
   String page = "{";
+  page += "\"interval\":";
+  page += ee.interval;
+//  page += ",\"x\":";
+//  page += c;
+  page += ",";
   for(int i = 0; i < 8; i++)
   {
     page += "\"setTemp";
@@ -523,7 +532,7 @@ void setup()
   Serial.println();
   Serial.println();
 
-  wifi.findOpenAP(myHost); // Tries all open APs, then starts softAP mode for config
+  wifi.autoConnect("Waterbed"); // Tries all open APs, then starts softAP mode for config
   eeRead(); // don't access EE before WiFi init
 
   Serial.println("");
@@ -904,8 +913,7 @@ uint16_t Fletcher16( uint8_t* data, int count)
 
 void checkSched(bool bUpdate)
 {
-  time_t t = now();
-  long timeNow = (hour(t)*60) + minute(t);
+  long timeNow = (hour()*60) + minute();
 
   if(bUpdate)
   {
@@ -1042,13 +1050,9 @@ bool ctSetIp()
       tm.Minute = line.substring(20,22).toInt();
       tm.Second = line.substring(23,25).toInt();
 
-      setTime(makeTime(tm));  // set time
-      breakTime(now(), tm);   // update local tm for adjusting
-
-      tm.Hour += ee.tz + IsDST();   // time zone change
-      if(tm.Hour > 23) tm.Hour -= 24;
-
-      setTime(makeTime(tm)); // set it again
+      unsigned long t = makeTime(tm);
+      t += 3600 * (ee.tz + DST()); // offset in hours
+      setTime(t);  // set time
 
       Serial.println("Time updated");
     }
@@ -1058,12 +1062,83 @@ bool ctSetIp()
   return true;
 }
 
-bool IsDST()
+uint8_t DST() // 2016 starts 2AM Mar 13, ends Nov 6
 {
   uint8_t m = month();
-  if (m < 3 || m > 11)  return false;
-  if (m > 3 && m < 11)  return true;
-  int8_t previousSunday = day() - weekday();
-  if(m == 2) return previousSunday >= 8;
-  return previousSunday <= 0;
+  int8_t d = day();
+  int8_t dow = weekday();
+  if ((m  >  3 && m < 11 ) || 
+      (m ==  3 && d >= 8 && dow == 0 && hour() >= 2) ||  // DST starts 2nd Sunday of March;  2am
+      (m == 11 && d <  8 && dow >  0) ||
+      (m == 11 && d <  8 && dow == 0 && hour() < 2))   // DST ends 1st Sunday of November; 2am
+    return 1;
+ return 0;
+}
+
+void getUdpTime()
+{
+  Serial.println("getUdpTime");
+  Udp.begin(2390);
+  // set all bytes in the buffer to 0
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  // Initialize values needed to form NTP request
+  // (see URL above for details on the packets)
+  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+  packetBuffer[1] = 0;     // Stratum, or type of clock
+  packetBuffer[2] = 6;     // Polling Interval
+  packetBuffer[3] = 0xEC;  // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12]  = 49;
+  packetBuffer[13]  = 0x4E;
+  packetBuffer[14]  = 49;
+  packetBuffer[15]  = 52;
+  
+  // all NTP fields have been given values, now
+  // you can send a packet requesting a timestamp:
+  // time.nist.gov
+  Udp.beginPacket("0.us.pool.ntp.org", 123); //NTP requests are to port 123
+  Udp.write(packetBuffer, NTP_PACKET_SIZE);
+  Udp.endPacket();
+}
+
+bool checkUdpTime()
+{
+  static int retry = 0;
+
+  if(!Udp.parsePacket())
+  {
+    if(++retry > 500)
+     {
+        getUdpTime();
+        retry = 0;
+     }
+    return false;
+  }
+  Serial.println("checkUdpTime good");
+
+  // We've received a packet, read the data from it
+  Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+
+  Udp.stop();
+  // the timestamp starts at byte 40 of the received packet and is four bytes,
+  // or two words, long. First, extract the two words:
+
+  unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+  unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+  unsigned long secsSince1900 = highWord << 16 | lowWord;
+  // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
+  const unsigned long seventyYears = 2208988800UL;
+  long timeZoneOffset = 3600 * (ee.tz + DST());
+  unsigned long epoch = secsSince1900 - seventyYears + timeZoneOffset + 1; // bump 1 second
+
+  // Grab the fraction
+  highWord = word(packetBuffer[44], packetBuffer[45]);
+  lowWord = word(packetBuffer[46], packetBuffer[47]);
+  unsigned long d = (highWord << 16 | lowWord) / 4295000; // convert to ms
+
+  delay(1000-d); // sync to fraction in ms
+  setTime(epoch);
+//  Serial.print("Time ");
+//  Serial.println(timeFmt(true, true));
+  return true;
 }
