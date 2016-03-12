@@ -87,15 +87,11 @@ struct eeSet // EEPROM backed data
 {
   uint16_t size;          // if size changes, use defauls
   uint16_t sum;           // if sum is diiferent from memory struct, write
-  char     dataServer[32]; // server for logging
-  uint16_t interval;      // log inerval in seconds
   uint16_t vacaTemp;       // vacation temp
-  uint8_t  dataServerPort; // log server port
   int8_t   tz;            // Timezone offset from your global server
   uint8_t  schedCnt;    // number of active scedules
   uint8_t  bVaca;         // vacation enabled
   uint8_t  bAvg;         // average target between schedules
-  uint8_t  resvd;
   char     schNames[MAX_SCHED][16]; // 128  names for small display
   Sched   schedule[MAX_SCHED];  // 48 bytes
 };
@@ -103,19 +99,19 @@ struct eeSet // EEPROM backed data
 eeSet ee = {
   sizeof(eeSet),
   0xAAAA,
-  "192.168.0.189", 5*60, 650, 83, 2, // dataServer, vacTemp, interval, port, TZ
-  2, 0,                   // active schedules, vacation mode
-  0, 0,                   // average, reserved
+  650, -5, // vacaTemp, TZ
+  4, 0,                   // active schedules, vacation mode
+  0,                   // average
   {"Morning", "Noon", "Day", "Night", "Sch5", "Sch6", "Sch7", "Sch8"},
   {
-    {830,  0*60, 6, 0},  // temp, time, thresh, wday
-    {820,  6*60, 6, 0},
-    {820, 12*60, 6, 0},
-    {830, 18*60, 6, 0},
-    {830,  9*60, 6, 0},
-    {830,  9*60, 6, 0},
-    {830,  9*60, 6, 0},
-    {830,  9*60, 6, 0}
+    {820,  7*60, 5, 0},  // temp, time, thresh, wday
+    {810, 11*60, 3, 0},
+    {810, 17*60, 3, 0},
+    {820, 20*60, 3, 0},
+    {830,  0*60, 3, 0},
+    {830,  0*60, 3, 0},
+    {830,  0*60, 3, 0},
+    {830,  0*60, 3, 0}
   },
 };
 
@@ -130,8 +126,84 @@ int hiTemp; // current target
 int loTemp;
 bool bHeater = false;
 bool bNeedUpdate = true;
-int logCounter = 60;
 uint8_t schInd = 0;
+
+#define CLIENTS 4
+class eventClient
+{
+public:
+  eventClient()
+  {
+  }
+
+  void set(WiFiClient cl, int t)
+  {
+    m_client = cl;
+    m_interval = t;
+    m_timer = 0;
+    m_keepAlive = 10;
+    m_client.print(":ok\n");
+    push();
+  }
+
+  bool inUse()
+  {
+    return m_client.connected();
+  }
+
+  void push()
+  {
+    if(m_client.connected() == 0)
+      return;
+    String s = dataJson(0);
+    m_client.print("event: state\n");
+    m_client.println("data: " + s + "\n");
+    m_keepAlive = 11;
+    m_timer = 0;
+  }
+
+  void beat()
+  {
+    if(m_client.connected() == 0)
+      return;
+
+    if(++m_timer >= m_interval)
+      push();
+ 
+    if(--m_keepAlive <= 0)
+    {
+      m_client.print("\n");
+      m_keepAlive = 10;
+    }
+  }
+
+private:
+  String dataJson(long ip)
+  {
+    String s = "{\"temp\": ";
+    s += sDec(currentTemp);
+    s += ",\"setTemp\": ";
+    s += sDec(ee.schedule[schInd].setTemp);
+    s += ", \"hiTemp\": ";
+    s += sDec(hiTemp);
+    s += ", \"loTemp\": ";
+    s += sDec(loTemp);
+    s += ", \"schInd\": ";
+    s += schInd;
+    s += ", \"on\": ";
+    s += bHeater;
+    s += ",\"ip\": \"";
+    s += ipString(ip);
+    s += "\"}";
+    return s;
+  }
+
+  WiFiClient m_client;
+  int8_t m_keepAlive;
+  uint16_t m_interval;
+  uint16_t m_timer;
+};
+eventClient ec[CLIENTS];
 
 String ipString(IPAddress ip) // Convert IP to string
 {
@@ -145,20 +217,16 @@ String ipString(IPAddress ip) // Convert IP to string
   return sip;
 }
 
-void handleRoot() // Main webpage interface
+void parseParams()
 {
-  digitalWrite(LED, HIGH);
   char temp[100];
   String password;
   int val;
-  bool bUpdateTime = false;
-  bool ipSet = false;
   eeSet save;
   memcpy(&save, &ee, sizeof(ee));
 
-  Serial.println("handleRoot");
-
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
+  for ( uint8_t i = 0; i < server.args(); i++ )
+  {
     server.arg(i).toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
     Serial.println( i + " " + server.argName ( i ) + ": " + s);
@@ -190,24 +258,8 @@ void handleRoot() // Main webpage interface
           break;
       case 'Z': // TZ
           ee.tz = val;
-          bUpdateTime = true; // refresh current time
-          break;
-      case 'i': // ?ip=server&port=80&int=60&key=password (htTp://192.168.0.197:82/s?ip=192.168.0.189&port=81&int=600&key=password)
-          switch(server.argName(i).charAt(1))
-          {
-            case 'n': // interval
-              ee.interval = val;
-              break;
-            case 'p': //ip
-              s.toCharArray(ee.dataServer, sizeof(ee.dataServer));
-              Serial.print("Server ");
-              Serial.println(ee.dataServer);
-              ipSet = true;
-              break;
-           }
-           break;
-      case 'p': // port
-          ee.dataServerPort = val;
+          getUdpTime();
+          bNeedUpdate = true;
           break;
       case 'S': // S0-7
           if(s.indexOf(':') >= 0) // if :, otherwise raw minutes
@@ -249,7 +301,7 @@ void handleRoot() // Main webpage interface
       nWrongPass <<= 1;
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
-    ctSendIP(false, ip); // log attempts
+    eventPush(ip); // log attempts
   }
 
   if(nWrongPass) memcpy(&ee, &save, sizeof(ee)); // undo any changes
@@ -258,37 +310,55 @@ void handleRoot() // Main webpage interface
 
   checkLimits();      // constrain and check new values
   checkSched(true);   // reconfigure to new schedule
+}
+
+void handleRoot() // Main webpage interface
+{
+  digitalWrite(LED, HIGH);
+
+  Serial.println("handleRoot");
+
+  parseParams();
 
   String page;
   
-  if(ipSet) // if data IP being set, return local IP
-  {
-    page = "{\"ip\": \"";
-    page += ipString(WiFi.localIP());
-    page += ":";
-    page += serverPort;
-    page += "\"}";
-    server.send ( 200, "text/json", page );
-  }
-  else
-  {
-    page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
-          "<title>WiFi Waterbed Heater</title>"
-          "<style>div,input {margin-bottom: 5px;}body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
-          "<body bgcolor=\"silver\" onload=\"{"
-          "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
-          "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;"
-          "}\">"
-          "<h3>WiFi Waterbed Heater</h3>"
-          "<table align=\"right\">";
+  page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
+    "<title>WiFi Waterbed Heater</title>"
+    "<style>div,input {margin-bottom: 5px;}body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
+
+    "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>"
+    "<script type=\"text/javascript\">"
+    "function startEvents()"
+    "{"
+      "eventSource = new EventSource(\"events?i=60\");"
+      "eventSource.addEventListener('open', function(e){},false);"
+      "eventSource.addEventListener('error', function(e){},false);"
+      "eventSource.addEventListener('state',function(e){"
+        "d = JSON.parse(e.data);"
+        "document.all.temp.innerHTML=d.temp+\"&degF\";"
+        "document.all.on.innerHTML=d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\";"
+      "},false)"
+    "}"
+    "setInterval(timer,1000);"
+    "t=";
+    page += now() - (ee.tz * 60 * 60); // set to GMT
+    page +="000;function timer(){" // add 000 for ms
+          "t+=1000;d=new Date(t);"
+          "document.all.time.innerHTML=d.toLocaleTimeString()}"
+    "</script>"
+    "<body bgcolor=\"silver\" onload=\"{"
+    "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
+    "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;}\">"
+    "<h3>WiFi Waterbed Heater</h3>"
+    "<table align=\"right\">";
     // Row 1
     page += "<tr>"
-            "<td colspan=2>";
+            "<td align=\"center\" colspan=2><div id=\"time\">";
     page += timeFmt(true, true);
-    page += "</td><td colspan=2>";
-    page += sDec(currentTemp) + "&degF ";
+    page += "</div></td><td><div id=\"temp\">";
+    page += sDec(currentTemp) + "&degF </div></td><td><div id=\"on\">";
     page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
-    page += "</td></tr>"
+    page += "</div></td></tr>"
     // Row 2
             "<tr>"
             "<td colspan=2>";
@@ -324,7 +394,7 @@ void handleRoot() // Main webpage interface
       page += "</td></tr>";
     }
     page += "<tr><td colspan=2><small>IP: ";
-    page += ipString(ip);
+    page += ipString(server.client().remoteIP());
     page += "</small></td><td colspan=2>"
             "<input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 90px\">"
             "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
@@ -332,11 +402,7 @@ void handleRoot() // Main webpage interface
             "</table>"
             "</body></html>";
     server.send ( 200, "text/html", page );
-  }
-
-  if(bUpdateTime)
-    ctSetIp();
-
+  
   digitalWrite(LED, LOW);
 }
 
@@ -410,7 +476,7 @@ String schedForm(int sch)
 String vacaForm(void)
 {
   String s = "<form method='post'>";
-  s += "Vaca <input name='V0' type=text size=4 value='";
+  s += "Vaca <input name='V0' type=text size=3 value='";
   s += sDec(ee.vacaTemp);
   s += "F'>";
   s += "<input type=\"hidden\" name=\"key\"><input name='V1' value='";
@@ -444,7 +510,14 @@ String timeFmt(bool do_sec, bool do_M)
 
 void handleS() { // /s?x=y can be redirected to index
   Serial.println("handleS\n");
-  handleRoot();
+  parseParams();
+
+  String page = "{\"ip\": \"";
+  page += ipString(WiFi.localIP());
+  page += ":";
+  page += serverPort;
+  page += "\"}";
+  server.send ( 200, "text/json", page );
 }
 
 // Return lots of vars as JSON
@@ -452,11 +525,6 @@ void handleJson()
 {
   Serial.println("handleJson\n");
   String page = "{";
-  page += "\"interval\":";
-  page += ee.interval;
-//  page += ",\"x\":";
-//  page += c;
-  page += ",";
   for(int i = 0; i < 8; i++)
   {
     page += "\"setTemp";
@@ -490,6 +558,49 @@ void handleJson()
   page += "}";
 
   server.send ( 200, "text/json", page );
+}
+
+// event streamer (assume keep-alive) (esp8266 2.1.0 can't handle this)
+void handleEvents()
+{
+  char temp[100];
+  Serial.println("handleEvents");
+  uint16_t interval = 60; // default interval
+ 
+  for ( uint8_t i = 0; i < server.args(); i++ ) {
+    server.arg(i).toCharArray(temp, 100);
+    String s = wifi.urldecode(temp);
+    Serial.println( i + " " + server.argName ( i ) + ": " + s);
+    int val = s.toInt();
+ 
+    switch( server.argName(i).charAt(0)  )
+    {
+      case 'i': // interval
+          interval = val;
+          break;
+    }
+  }
+
+  server.send( 200, "text/event-stream", "" );
+  bool good = false;
+  for(int i = 0; i < CLIENTS; i++) // find an unused client
+    if(!ec[i].inUse())
+    {
+      ec[i].set(server.client(), interval);
+      break;
+    }
+}
+
+void eventHeartbeat()
+{
+  for(int i = 0; i < CLIENTS; i++)
+    ec[i].beat();
+}
+
+void eventPush(long ip) // push to all
+{
+  for(int i = 0; i < CLIENTS; i++)
+    ec[i].push();
 }
 
 void handleNotFound() {
@@ -547,9 +658,10 @@ void setup()
   server.on ( "/", handleRoot );
   server.on ( "/s", handleS );
   server.on ( "/json", handleJson );
-  server.on ( "/inline", []() {
-    server.send ( 200, "text/plain", "this works as well" );
-  } );
+  server.on ( "/events", handleEvents );
+//  server.on ( "/inline", []() {
+//    server.send ( 200, "text/plain", "this works as well" );
+//  } );
   server.onNotFound ( handleNotFound );
   digitalWrite(HEARTBEAT, HIGH);
   server.begin();
@@ -577,8 +689,10 @@ void setup()
     Serial.println("No OneWire devices");
   }
 
-  ctSendIP(true, WiFi.localIP());
   digitalWrite(HEARTBEAT, LOW);
+  ctSetIp();
+  getUdpTime();
+  bNeedUpdate = true;
 }
 
 void loop()
@@ -586,6 +700,14 @@ void loop()
   mdns.update();
   server.handleClient();
   checkButtons();
+  if(bNeedUpdate)
+  {
+    if( checkUdpTime() )           // update with NTP
+    {
+      checkSched(true); // sync schedule to updated time
+      bNeedUpdate = false;
+    }
+  }
 
   if(sec_save != second()) // only do stuff once per second
   {
@@ -599,30 +721,20 @@ void loop()
       checkSched(false);        // check every minute for next schedule
       if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
       {
-        display.init();
+        eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
         if( (hour_save = hour()) == 2)
+        {
+          getUdpTime();
           bNeedUpdate = true;
+        }
       }
     }
-    if(bNeedUpdate)
-      if( ctSetIp() )
-      {
-        bNeedUpdate = false;
-        checkSched(true); // sync schedule to updated time
-      }
    
     if(nWrongPass)
       nWrongPass--;
 
-    if(logCounter)
-    {
-      if(--logCounter == 0)
-      {
-        logCounter = ee.interval;
-        ctSendLog(true);
-        eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
-      }
-    }
+    eventHeartbeat();
+  
     digitalWrite(HEARTBEAT, !digitalRead(HEARTBEAT));
   }
   DrawScreen();
@@ -708,7 +820,6 @@ void checkTemp()
   {
     bHeater = false;
     digitalWrite(HEAT, LOW);
-//    ctSendLog(false);
     return;
   }
 
@@ -777,14 +888,14 @@ void checkTemp()
     Serial.println("Heat on");
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
-    ctSendLog(true); // give a more precise account of changes
+    eventPush(0); // give a more precise account of changes
   }
   else if(currentTemp >= hiTemp && bHeater == true)
   {
     Serial.println("Heat off");
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
-    ctSendLog(true);
+    eventPush(0);
   }
 }
 
@@ -935,80 +1046,6 @@ void checkSched(bool bUpdate)
   }
 }
 
-// Send logging data to a server.  This sends JSON formatted data to my local PC, but change to anything needed.
-void ctSendLog(bool ok)
-{
-  String s = "/s?waterbedLog={\"temp\": ";
-  s += sDec(currentTemp);
-  s += ",\"setTemp\": ";
-  s += sDec(ee.schedule[schInd].setTemp);
-  s += ",\"schInd\": ";
-  s += schInd;
-  s += ",\"thresh\": ";
-  s += sDec(ee.schedule[schInd].thresh);
-  s += ",\"hiTemp\": ";
-  s += sDec(hiTemp);
-  s += ",\"loTemp\": ";
-  s += sDec(loTemp);
-  s += ",\"on\": ";
-  s += bHeater;
-  s += ",\"ok\": ";
-  s += ok;
-  s += "}";
-  ctSend(s);
-}
-
-// Send local IP on start for comm, or bad password attempt IP when caught
-void ctSendIP(bool local, uint32_t ip)
-{
-  String s = local ? "/s?waterbedIP=\"" : "/s?waterbedHackIP=\"";
-  s += ipString(ip);
-  if(local)
-  {
-    s += ":";
-    s += serverPort;
-  }
-  s += "\"";
-
-  ctSend(s);
-}
-
-// Send stuff to a server.
-void ctSend(String s)
-{
-  if(ee.dataServer[0] == 0){
-    Serial.println("No dataServer");
-    return;
-  }
-  WiFiClient client;
-  if (!client.connect(ee.dataServer, ee.dataServerPort)) {
-    Serial.println("dataServer connection failed");
-    Serial.print(ee.dataServer);
-    Serial.print(":");
-    Serial.println(ee.dataServerPort);
-    delay(100);
-    return;
-  }
-  Serial.println("dataServer connected");
-
-  // This will send the request to the server
-  client.print(String("GET ") + s + " HTTP/1.1\r\n" +
-               "Host: " + ee.dataServer + "\r\n" + 
-               "Connection: close\r\n\r\n");
-
-  delay(10);
- 
-  // Read all the lines of the reply from server and print them to Serial
-  while(client.available()){
-    String line = client.readStringUntil('\r');
-    Serial.print(line);
-  }
-
-  Serial.println();
-//  Serial.println("closing connection.");
-  client.stop();
-}
-
 // Setup a php script on my server to send traffic here from /iot/waterbed.php, plus sync time
 // PHP script: https://github.com/CuriousTech/ESP07_Multi/blob/master/fwdip.php
 bool ctSetIp()
@@ -1042,19 +1079,6 @@ bool ctSetIp()
     }
     else if(line.startsWith("Time:")) // Time from the server in a simple format
     {
-      tmElements_t tm;
-      tm.Year   = line.substring(6,10).toInt() - 1970;
-      tm.Month  = line.substring(11,13).toInt();
-      tm.Day    = line.substring(14,16).toInt();
-      tm.Hour   = line.substring(17,19).toInt();
-      tm.Minute = line.substring(20,22).toInt();
-      tm.Second = line.substring(23,25).toInt();
-
-      unsigned long t = makeTime(tm);
-      t += 3600 * (ee.tz + DST()); // offset in hours
-      setTime(t);  // set time
-
-      Serial.println("Time updated");
     }
   }
  
