@@ -1,6 +1,6 @@
 /**The MIT License (MIT)
 
-Copyright (c) 2015 by Greg Cunningham, CuriousTech
+Copyright (c) 2016 by Greg Cunningham, CuriousTech
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,30 +22,21 @@ SOFTWARE.
 */
 
 #include <Wire.h>
-#include <OneWire.h>
 #include "ssd1306_i2c.h"
 #include "icons.h"
-#include <Time.h>
 
 #include <WiFiClient.h>
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
 #include <ESP8266WebServer.h>
-#include <WiFiUdp.h>
+#include <OneWire.h>
+#include "time.h"
 
 const char *controlPassword = "password"; // device password for modifying any settings
 const char *serverFile = "Waterbed";    // Creates /iot/Waterbed.php
 int serverPort = 82;                    // port fwd for fwdip.php
 const char *myHost = "www.yourdomain.com"; // php forwarding/time server (fwdip.php)
-
-const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
-byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
-WiFiUDP Udp;
-
-extern "C" {
-  #include "user_interface.h" // Needed for deepSleep which isn't used
-}
 
 #define LED       0  // back LED for debug
 #define ESP_LED   2  //Blue LED on ESP07 (on low)
@@ -58,9 +49,6 @@ extern "C" {
 
 OneWire ds(DS18B20);
 byte ds_addr[8];
-long read_temp;
-long read_scratch;
-bool bScratch;
 uint32_t lastIP;
 int nWrongPass;
 
@@ -115,8 +103,6 @@ eeSet ee = {
   },
 };
 
-uint8_t hour_save, min_save, sec_save;
-
 bool bState[2];
 bool lbState[2];
 long debounce[2];
@@ -125,8 +111,8 @@ int currentTemp = 999;
 int hiTemp; // current target
 int loTemp;
 bool bHeater = false;
-bool bNeedUpdate = true;
 uint8_t schInd = 0;
+uint8_t dst = 0;
 
 #define CLIENTS 4
 class eventClient
@@ -143,7 +129,7 @@ public:
     m_timer = 0;
     m_keepAlive = 10;
     m_client.print(":ok\n");
-    push();
+    push(0);
   }
 
   bool inUse()
@@ -151,11 +137,11 @@ public:
     return m_client.connected();
   }
 
-  void push()
+  void push(long ip)
   {
     if(m_client.connected() == 0)
       return;
-    String s = dataJson(0);
+    String s = dataJson(ip);
     m_client.print("event: state\n");
     m_client.println("data: " + s + "\n");
     m_keepAlive = 11;
@@ -168,7 +154,7 @@ public:
       return;
 
     if(++m_timer >= m_interval)
-      push();
+      push(0);
  
     if(--m_keepAlive <= 0)
     {
@@ -258,8 +244,7 @@ void parseParams()
           break;
       case 'Z': // TZ
           ee.tz = val;
-          getUdpTime();
-          bNeedUpdate = true;
+          resetClock();
           break;
       case 'S': // S0-7
           if(s.indexOf(':') >= 0) // if :, otherwise raw minutes
@@ -341,7 +326,7 @@ void handleRoot() // Main webpage interface
     "}"
     "setInterval(timer,1000);"
     "t=";
-    page += now() - (ee.tz * 60 * 60); // set to GMT
+    page += time(nullptr) - (ee.tz * 3600) - (dst * 3600) ; // set to GMT
     page +="000;function timer(){" // add 000 for ms
           "t+=1000;d=new Date(t);"
           "document.all.time.innerHTML=d.toLocaleTimeString()}"
@@ -485,25 +470,32 @@ String vacaForm(void)
   return s;
 }
 
-// Time in hh:mm[:ss][AM/PM]
-String timeFmt(bool do_sec, bool do_M)
+// Set sec to 60 to remove seconds
+String timeFmt(bool do_sec, bool do_12)
 {
+  time_t t = time(nullptr);
+  tm *ptm = localtime(&t);
+
+  uint8_t h = ptm->tm_hour;
+  if(h == 0) h = 12;
+  else if( h > 12) h -= 12;
+ 
   String r = "";
-  if(hourFormat12() < 10) r = " ";
-  r += hourFormat12();
+  if(h <10) r = " ";
+  r += h;
   r += ":";
-  if(minute() < 10) r += "0";
-  r += minute();
+  if(ptm->tm_min < 10) r += "0";
+  r += ptm->tm_min;
   if(do_sec)
   {
     r += ":";
-    if(second() < 10) r += "0";
-    r += second();
+    if(ptm->tm_sec < 10) r += "0";
+    r += ptm->tm_sec;
     r += " ";
   }
-  if(do_M)
+  if(do_12)
   {
-      r += isPM() ? "PM":"AM";
+      r += (ptm->tm_hour > 12) ? "PM":"AM";
   }
   return r;
 }
@@ -582,7 +574,7 @@ void handleEvents()
   }
 
   server.send( 200, "text/event-stream", "" );
-  bool good = false;
+
   for(int i = 0; i < CLIENTS; i++) // find an unused client
     if(!ec[i].inUse())
     {
@@ -600,7 +592,7 @@ void eventHeartbeat()
 void eventPush(long ip) // push to all
 {
   for(int i = 0; i < CLIENTS; i++)
-    ec[i].push();
+    ec[i].push(ip);
 }
 
 void handleNotFound() {
@@ -620,6 +612,11 @@ void handleNotFound() {
   }
 
   server.send ( 404, "text/plain", message );
+}
+
+void resetClock()
+{
+  configTime((ee.tz * 3600) + (dst * 3600), 0, "0.us.pool.ntp.org", "pool.ntp.org", "time.nist.gov");
 }
 
 void setup()
@@ -691,41 +688,45 @@ void setup()
 
   digitalWrite(HEARTBEAT, LOW);
   ctSetIp();
-  getUdpTime();
-  bNeedUpdate = true;
+  resetClock();
 }
 
 void loop()
 {
+  static uint8_t hour_save, min_save, sec_save;
+  static bool dstSet = false;
+
   mdns.update();
   server.handleClient();
   checkButtons();
-  if(bNeedUpdate)
-  {
-    if( checkUdpTime() )           // update with NTP
-    {
-      checkSched(true); // sync schedule to updated time
-      bNeedUpdate = false;
-    }
-  }
 
-  if(sec_save != second()) // only do stuff once per second
+  time_t t = time(nullptr);
+  tm *ptm = localtime(&t);
+
+  if(sec_save != ptm->tm_sec) // only do stuff once per second
   {
-    sec_save = second();
+    sec_save = ptm->tm_sec;
+
+    if(dstSet == false && ptm->tm_year > 100) // startup DST fix
+    {
+      DST();
+      resetClock();
+      dstSet = true;
+    }
 
     checkTemp();
 
-    if(min_save != minute()) // only do stuff once per minute
+    if(min_save != ptm->tm_min) // only do stuff once per minute
     {
-      min_save = minute();
+      min_save = ptm->tm_min;
       checkSched(false);        // check every minute for next schedule
-      if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
+      if (hour_save != ptm->tm_hour) // update our IP and time daily (at 2AM for DST)
       {
         eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
-        if( (hour_save = hour()) == 2)
+        if( (hour_save = ptm->tm_hour) == 2)
         {
-          getUdpTime();
-          bNeedUpdate = true;
+          DST();
+          resetClock();
         }
       }
     }
@@ -737,14 +738,17 @@ void loop()
   
     digitalWrite(HEARTBEAT, !digitalRead(HEARTBEAT));
   }
-  DrawScreen();
+  DrawScreen(ptm);
 }
 
 int16_t ind;
 bool blnk = false;
 long last;
 
-void DrawScreen()
+const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
+const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+
+void DrawScreen(tm *ptm)
 {
   // draw the screen here
   display.clear();
@@ -765,11 +769,11 @@ void DrawScreen()
 
     String s = timeFmt(true, true); // the scroller
     s += "  ";
-    s += dayShortStr(weekday());
+    s += days[ptm->tm_wday];
     s += " ";
-    s += String(day());
+    s += String(ptm->tm_mday);
     s += " ";
-    s += monthShortStr(month());
+    s += months[ptm->tm_mon];
     s += "  ";
     int len = s.length();
     s = s + s;
@@ -797,19 +801,19 @@ void DrawScreen()
 // Check temp to turn heater on and off
 void checkTemp()
 {
-  if ((millis() - read_temp) > 5000) // start a conversion every 5 seconds
+  static bool bReading = false;
+  static uint16_t array[8] = {800, 800, 800, 800, 800, 800, 800, 800};
+  static int idx = 0;
+
+  if(bReading == false) // start a conversion
   {
-    read_temp = millis();
     ds.reset();
     ds.select(ds_addr);
     ds.write(0x44,0);   // start conversion, no parasite power on at the end
-    read_scratch = millis();
-    bScratch = true;
+    bReading = true;
     return;
   }
-  if(!bScratch || (millis() - read_scratch) < 1000) // conversion takes 750ms
-    return;
-  bScratch = false;
+  bReading = false;
 
   uint8_t data[10];
   uint8_t present = ds.reset();
@@ -825,10 +829,7 @@ void checkTemp()
 
   for ( int i = 0; i < 9; i++) {           // we need 9 bytes
     data[i] = ds.read();
-//    Serial.print(data[i], HEX);
-//    Serial.print(" ");
   }
-//  Serial.println();
 
   if(OneWire::crc8( data, 8) != data[8])  // bad CRC
   {
@@ -840,11 +841,22 @@ void checkTemp()
 
   uint16_t raw = (data[1] << 8) | data[0];
 
-//  int newTemp = (( raw * 625) / 1000;  // to 10x celcius
-  int newTemp = ( (raw * 1125) + 320000) / 1000; // 10x fahrenheit
-  if(newTemp > currentTemp + 100)
-    Serial.println("Skipping strange reading");
-  else currentTemp = newTemp;
+  if(raw > 1000) return;
+
+//   = (( raw * 625) / 1000;  // to 10x celcius
+  array[idx] = ( (raw * 1125) + 320000) / 1000; // 10x fahrenheit
+  if(++idx > 8) idx = 0;
+
+  uint16_t newTemp = 0;
+  for(int i = 0; i < 8; i++)
+    newTemp += array[i];
+  newTemp /= 8;
+
+  if(newTemp != currentTemp)
+  {
+    currentTemp = newTemp;
+    eventPush(0);
+  }
   Serial.println( currentTemp );
 //  Serial.print("Temp: ");
 //  Serial.println(currentTemp);
@@ -871,7 +883,10 @@ void checkTemp()
       range = ee.schedule[s2].timeSch - start;
     }
 
-    int m = ((hour() * 60) + minute()); // current TOD in minutes
+    time_t t = time(nullptr);
+    tm *ptm = localtime(&t);
+
+    int m = (ptm->tm_hour * 60) + ptm->tm_min; // current TOD in minutes
 
     if(m < start) // offset by start of current schedule
       m -= start - (24*60); // rollover
@@ -1024,7 +1039,10 @@ uint16_t Fletcher16( uint8_t* data, int count)
 
 void checkSched(bool bUpdate)
 {
-  long timeNow = (hour()*60) + minute();
+  time_t t = time(nullptr);
+  tm *ptm = localtime(&t);
+
+  long timeNow = (ptm->tm_hour*60) + ptm->tm_min;
 
   if(bUpdate)
   {
@@ -1086,83 +1104,20 @@ bool ctSetIp()
   return true;
 }
 
-uint8_t DST() // 2016 starts 2AM Mar 13, ends Nov 6
+void DST() // 2016 starts 2AM Mar 13, ends Nov 6
 {
-  uint8_t m = month();
-  int8_t d = day();
-  int8_t dow = weekday();
-  if ((m  >  3 && m < 11 ) || 
-      (m ==  3 && d >= 8 && dow == 0 && hour() >= 2) ||  // DST starts 2nd Sunday of March;  2am
-      (m == 11 && d <  8 && dow >  0) ||
-      (m == 11 && d <  8 && dow == 0 && hour() < 2))   // DST ends 1st Sunday of November; 2am
-    return 1;
- return 0;
-}
+  time_t t = time(nullptr);
+  tm *ptm = localtime(&t);
 
-void getUdpTime()
-{
-  Serial.println("getUdpTime");
-  Udp.begin(2390);
-  // set all bytes in the buffer to 0
-  memset(packetBuffer, 0, NTP_PACKET_SIZE);
-  // Initialize values needed to form NTP request
-  // (see URL above for details on the packets)
-  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  packetBuffer[1] = 0;     // Stratum, or type of clock
-  packetBuffer[2] = 6;     // Polling Interval
-  packetBuffer[3] = 0xEC;  // Peer Clock Precision
-  // 8 bytes of zero for Root Delay & Root Dispersion
-  packetBuffer[12]  = 49;
-  packetBuffer[13]  = 0x4E;
-  packetBuffer[14]  = 49;
-  packetBuffer[15]  = 52;
-  
-  // all NTP fields have been given values, now
-  // you can send a packet requesting a timestamp:
-  // time.nist.gov
-  Udp.beginPacket("0.us.pool.ntp.org", 123); //NTP requests are to port 123
-  Udp.write(packetBuffer, NTP_PACKET_SIZE);
-  Udp.endPacket();
-}
+  uint8_t m = ptm->tm_mon; // 0-11
+  int8_t d = ptm->tm_mday; // 1-30
+  int8_t dow = ptm->tm_wday; // 0-6
 
-bool checkUdpTime()
-{
-  static int retry = 0;
-
-  if(!Udp.parsePacket())
-  {
-    if(++retry > 500)
-     {
-        getUdpTime();
-        retry = 0;
-     }
-    return false;
-  }
-  Serial.println("checkUdpTime good");
-
-  // We've received a packet, read the data from it
-  Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
-
-  Udp.stop();
-  // the timestamp starts at byte 40 of the received packet and is four bytes,
-  // or two words, long. First, extract the two words:
-
-  unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-  unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-  unsigned long secsSince1900 = highWord << 16 | lowWord;
-  // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
-  const unsigned long seventyYears = 2208988800UL;
-  long timeZoneOffset = 3600 * (ee.tz + DST());
-  unsigned long epoch = secsSince1900 - seventyYears + timeZoneOffset + 1; // bump 1 second
-
-  // Grab the fraction
-  highWord = word(packetBuffer[44], packetBuffer[45]);
-  lowWord = word(packetBuffer[46], packetBuffer[47]);
-  unsigned long d = (highWord << 16 | lowWord) / 4295000; // convert to ms
-
-  delay(1000-d); // sync to fraction in ms
-  setTime(epoch);
-//  Serial.print("Time ");
-//  Serial.println(timeFmt(true, true));
-  return true;
+  if ((m  >  2 && m < 10 ) || 
+      (m ==  2 && d >= 8 && dow == 0 && ptm->tm_hour >= 2) ||  // DST starts 2nd Sunday of March;  2am
+      (m == 10 && d <  8 && dow >  0) ||
+      (m == 10 && d <  8 && dow == 0 && ptm->tm_hour < 2))   // DST ends 1st Sunday of November; 2am
+   dst = 1;
+ else
+   dst = 0;
 }
