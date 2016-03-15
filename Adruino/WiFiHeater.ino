@@ -32,6 +32,7 @@ SOFTWARE.
 #include <ESP8266WebServer.h>
 #include <OneWire.h>
 #include "time.h"
+#include "event.h"
 
 const char *controlPassword = "password"; // device password for modifying any settings
 const char *serverFile = "Waterbed";    // Creates /iot/Waterbed.php
@@ -103,10 +104,6 @@ eeSet ee = {
   },
 };
 
-bool bState[2];
-bool lbState[2];
-long debounce[2];
-long lRepeatMillis;
 int currentTemp = 999;
 int hiTemp; // current target
 int loTemp;
@@ -114,58 +111,10 @@ bool bHeater = false;
 uint8_t schInd = 0;
 uint8_t dst = 0;
 
-#define CLIENTS 4
-class eventClient
+eventHandler event(dataJson);
+
+String dataJson()
 {
-public:
-  eventClient()
-  {
-  }
-
-  void set(WiFiClient cl, int t)
-  {
-    m_client = cl;
-    m_interval = t;
-    m_timer = 0;
-    m_keepAlive = 10;
-    m_client.print(":ok\n");
-    push(0);
-  }
-
-  bool inUse()
-  {
-    return m_client.connected();
-  }
-
-  void push(long ip)
-  {
-    if(m_client.connected() == 0)
-      return;
-    String s = dataJson(ip);
-    m_client.print("event: state\n");
-    m_client.println("data: " + s + "\n");
-    m_keepAlive = 11;
-    m_timer = 0;
-  }
-
-  void beat()
-  {
-    if(m_client.connected() == 0)
-      return;
-
-    if(++m_timer >= m_interval)
-      push(0);
- 
-    if(--m_keepAlive <= 0)
-    {
-      m_client.print("\n");
-      m_keepAlive = 10;
-    }
-  }
-
-private:
-  String dataJson(long ip)
-  {
     String s = "{\"temp\": ";
     s += sDec(currentTemp);
     s += ",\"setTemp\": ";
@@ -178,18 +127,9 @@ private:
     s += schInd;
     s += ", \"on\": ";
     s += bHeater;
-    s += ",\"ip\": \"";
-    s += ipString(ip);
-    s += "\"}";
+    s += "}";
     return s;
-  }
-
-  WiFiClient m_client;
-  int8_t m_keepAlive;
-  uint16_t m_interval;
-  uint16_t m_timer;
-};
-eventClient ec[CLIENTS];
+}
 
 String ipString(IPAddress ip) // Convert IP to string
 {
@@ -286,7 +226,7 @@ void parseParams()
       nWrongPass <<= 1;
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
-    eventPush(ip); // log attempts
+    event.print("HackIP=" + ipString(ip) ); // log attempts
   }
 
   if(nWrongPass) memcpy(&ee, &save, sizeof(ee)); // undo any changes
@@ -575,24 +515,7 @@ void handleEvents()
 
   server.send( 200, "text/event-stream", "" );
 
-  for(int i = 0; i < CLIENTS; i++) // find an unused client
-    if(!ec[i].inUse())
-    {
-      ec[i].set(server.client(), interval);
-      break;
-    }
-}
-
-void eventHeartbeat()
-{
-  for(int i = 0; i < CLIENTS; i++)
-    ec[i].beat();
-}
-
-void eventPush(long ip) // push to all
-{
-  for(int i = 0; i < CLIENTS; i++)
-    ec[i].push(ip);
+  event.set(server.client(), interval);
 }
 
 void handleNotFound() {
@@ -671,7 +594,7 @@ void setup()
 
   if( ds.search(ds_addr) )
   {
-    Serial.print("OneWire device: ");
+    Serial.print("OneWire device: "); // 28 22 92 29 7 0 0 6B
     for( int i = 0; i < 8; i++) {
       Serial.print(ds_addr[i], HEX);
       Serial.print(" ");
@@ -689,6 +612,7 @@ void setup()
   digitalWrite(HEARTBEAT, LOW);
   ctSetIp();
   resetClock();
+  checkSched(true);  // initialize
 }
 
 void loop()
@@ -734,22 +658,22 @@ void loop()
     if(nWrongPass)
       nWrongPass--;
 
-    eventHeartbeat();
+    event.heartbeat();
   
     digitalWrite(HEARTBEAT, !digitalRead(HEARTBEAT));
   }
   DrawScreen(ptm);
 }
 
-int16_t ind;
-bool blnk = false;
-long last;
-
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
 void DrawScreen(tm *ptm)
 {
+  static int16_t ind;
+  static bool blnk = false;
+  static long last;
+
   // draw the screen here
   display.clear();
 
@@ -790,9 +714,6 @@ void DrawScreen(tm *ptm)
   }
   else if(bHeater)  // small blinky dot when display is off
   {
-//    const char *xbm = blnk ? active_bits : inactive_bits;
-//    display.drawXbm(2, 56, 8, 8, xbm);  // heater on indicator
-
     if(blnk) display.drawString( 2, 56, ".");
   }
   display.display();
@@ -801,19 +722,25 @@ void DrawScreen(tm *ptm)
 // Check temp to turn heater on and off
 void checkTemp()
 {
-  static bool bReading = false;
-  static uint16_t array[8] = {800, 800, 800, 800, 800, 800, 800, 800};
-  static int idx = 0;
+  static uint16_t array[10] = {800,800,800,800,800,800,800,800,800,800};
+  static uint8_t idx = 0;
+  static uint8_t state = 0;
 
-  if(bReading == false) // start a conversion
+  switch(state)
   {
-    ds.reset();
-    ds.select(ds_addr);
-    ds.write(0x44,0);   // start conversion, no parasite power on at the end
-    bReading = true;
-    return;
+    case 0: // start a conversion
+      ds.reset();
+      ds.select(ds_addr);
+      ds.write(0x44,0);   // start conversion, no parasite power on at the end
+      state++;
+      return;
+    case 1:
+      state++;
+      break;
+    case 2:
+      state = 0; // 1 second rest
+      return;
   }
-  bReading = false;
 
   uint8_t data[10];
   uint8_t present = ds.reset();
@@ -827,106 +754,87 @@ void checkTemp()
     return;
   }
 
-  for ( int i = 0; i < 9; i++) {           // we need 9 bytes
+  for ( int i = 0; i < 9; i++)          // we need 9 bytes
     data[i] = ds.read();
-  }
 
   if(OneWire::crc8( data, 8) != data[8])  // bad CRC
   {
     bHeater = false;
     digitalWrite(HEAT, LOW);
     Serial.println("Invalid CRC");
+    event.print("Invalid CRC");
     return;
   }
 
   uint16_t raw = (data[1] << 8) | data[0];
 
-  if(raw > 1000) return;
+  if(raw > 630 || raw < 200){ // first reading is always 1360 (0x550)
+    Serial.print("err ");
+    Serial.println(raw);
+    return;
+  }
 
-//   = (( raw * 625) / 1000;  // to 10x celcius
-  array[idx] = ( (raw * 1125) + 320000) / 1000; // 10x fahrenheit
-  if(++idx > 8) idx = 0;
+//array[idx] = (( raw * 625) / 1000;  // to 10x celcius
+  array[idx] = (raw * 1125) / 1000 + 320; // 10x fahrenheit
+
+  if(++idx >= 10) idx = 0;
+/*
+  uint16_t a1 = array[0];
+  uint16_t a2 = 0;
+  uint8_t cnt1 = 0;
+  uint8_t cnt2 = 0;
+
+  for(int i = 1; i < 10; i++)  // cheap more frequent (of 2) finder
+  {
+    if(array[i] == a1)
+      cnt1++;
+    else
+    {
+      a2 = array[i];
+      cnt2++;
+    }
+  }
+  uint16_t newTemp = (cnt1 >= cnt2) ? a1:a2;
+*/
 
   uint16_t newTemp = 0;
-  for(int i = 0; i < 8; i++)
+
+  for(int i = 0; i < 10; i++)  // cheap more frequent (of 2) finder
     newTemp += array[i];
-  newTemp /= 8;
+  newTemp /= 10;
 
   if(newTemp != currentTemp)
   {
     currentTemp = newTemp;
-    eventPush(0);
+    event.push();
   }
-  Serial.println( currentTemp );
-//  Serial.print("Temp: ");
-//  Serial.println(currentTemp);
-
-  hiTemp = ee.bVaca ? ee.vacaTemp : ee.schedule[schInd].setTemp;
-  loTemp = ee.bVaca ? (hiTemp - 10) : (hiTemp - ee.schedule[schInd].thresh);
-  int thresh = ee.schedule[schInd].thresh;
- 
-  if(!ee.bVaca && ee.bAvg) // averageing mode
-  {
-    int start = ee.schedule[schInd].timeSch;
-    int range;
-    int s2;
-
-    // Find minute range between schedules
-    if(schInd == ee.schedCnt - 1) // rollover
-    {
-      s2 = 0;
-      range = ee.schedule[s2].timeSch + (24*60) - start;
-    }
-    else
-    {
-      s2 = schInd + 1;
-      range = ee.schedule[s2].timeSch - start;
-    }
-
-    time_t t = time(nullptr);
-    tm *ptm = localtime(&t);
-
-    int m = (ptm->tm_hour * 60) + ptm->tm_min; // current TOD in minutes
-
-    if(m < start) // offset by start of current schedule
-      m -= start - (24*60); // rollover
-    else
-      m -= start;
-
-    hiTemp = tween(ee.schedule[schInd].setTemp, ee.schedule[s2].setTemp, m, range);
-    thresh = tween(ee.schedule[schInd].thresh, ee.schedule[s2].thresh, m, range);
-    loTemp = hiTemp - thresh;
-  }
+  Serial.print("Temp: ");
+  Serial.println(currentTemp);
 
   if(currentTemp <= loTemp && bHeater == false)
   {
     Serial.println("Heat on");
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
-    eventPush(0); // give a more precise account of changes
+    event.push(); // give a more precise account of changes
   }
   else if(currentTemp >= hiTemp && bHeater == true)
   {
     Serial.println("Heat off");
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
-    eventPush(0);
+    event.push();
   }
 }
-
-// avarge value at current minute between times
-int tween(int t1, int t2, int m, int range)
-{
-  if(range == 0) range = 1; // div by zero check
-  int t = (t2 - t1) * (m * 100 / range) / 100;
-  return t + t1;
-}
-
-// todo: B-spline the tween
 
 // Check the buttons
 void checkButtons()
 {
+  static bool bState[2];
+  static bool lbState[2];
+  static long debounce[2];
+  static long lRepeatMillis;
+
   bool bUp = digitalRead(BTN_UP);
   bool bDn = digitalRead(BTN_DN);
 
@@ -998,45 +906,6 @@ void checkLimits()
   }
 }
 
-void eeWrite() // write the settings if changed
-{
-  uint16_t old_sum = ee.sum;
-  ee.sum = 0;
-  ee.sum = Fletcher16((uint8_t *)&ee, sizeof(eeSet));
-
-  if(old_sum == ee.sum)
-    return; // Nothing has changed?
-
-  wifi.eeWriteData(64, (uint8_t*)&ee, sizeof(ee)); // WiFiManager already has an instance open, so use that at offset 64+
-}
-
-void eeRead()
-{
-  eeSet eeTest;
-
-  wifi.eeReadData(64, (uint8_t*)&eeTest, sizeof(eeSet));
-  if(eeTest.size != sizeof(eeSet)) return; // revert to defaults if struct size changes
-  uint16_t sum = eeTest.sum;
-  eeTest.sum = 0;
-  eeTest.sum = Fletcher16((uint8_t *)&eeTest, sizeof(eeSet));
-  if(eeTest.sum != sum) return; // revert to defaults if sum fails
-  memcpy(&ee, &eeTest, sizeof(eeSet));
-}
-
-uint16_t Fletcher16( uint8_t* data, int count)
-{
-   uint16_t sum1 = 0;
-   uint16_t sum2 = 0;
-
-   for( int index = 0; index < count; ++index )
-   {
-      sum1 = (sum1 + data[index]) % 255;
-      sum2 = (sum2 + sum1) % 255;
-   }
-
-   return (sum2 << 8) | sum1;
-}
-
 void checkSched(bool bUpdate)
 {
   time_t t = time(nullptr);
@@ -1062,6 +931,51 @@ void checkSched(bool bUpdate)
       break;
     }
   }
+
+  hiTemp = ee.bVaca ? ee.vacaTemp : ee.schedule[schInd].setTemp;
+  loTemp = ee.bVaca ? (hiTemp - 10) : (hiTemp - ee.schedule[schInd].thresh);
+  int thresh = ee.schedule[schInd].thresh;
+
+  if(!ee.bVaca && ee.bAvg) // averageing mode
+  {
+    int start = ee.schedule[schInd].timeSch;
+    int range;
+    int s2;
+
+    // Find minute range between schedules
+    if(schInd == ee.schedCnt - 1) // rollover
+    {
+      s2 = 0;
+      range = ee.schedule[s2].timeSch + (24*60) - start;
+    }
+    else
+    {
+      s2 = schInd + 1;
+      range = ee.schedule[s2].timeSch - start;
+    }
+
+    time_t t = time(nullptr);
+    tm *ptm = localtime(&t);
+
+    int m = (ptm->tm_hour * 60) + ptm->tm_min; // current TOD in minutes
+
+    if(m < start) // offset by start of current schedule
+      m -= start - (24*60); // rollover
+    else
+      m -= start;
+
+    hiTemp = tween(ee.schedule[schInd].setTemp, ee.schedule[s2].setTemp, m, range);
+    thresh = tween(ee.schedule[schInd].thresh, ee.schedule[s2].thresh, m, range);
+    loTemp = hiTemp - thresh;
+  }
+}
+
+// avarge value at current minute between times
+int tween(int t1, int t2, int m, int range)
+{
+  if(range == 0) range = 1; // div by zero check
+  int t = (t2 - t1) * (m * 100 / range) / 100;
+  return t + t1;
 }
 
 // Setup a php script on my server to send traffic here from /iot/waterbed.php, plus sync time
@@ -1120,4 +1034,43 @@ void DST() // 2016 starts 2AM Mar 13, ends Nov 6
    dst = 1;
  else
    dst = 0;
+}
+
+void eeWrite() // write the settings if changed
+{
+  uint16_t old_sum = ee.sum;
+  ee.sum = 0;
+  ee.sum = Fletcher16((uint8_t *)&ee, sizeof(eeSet));
+
+  if(old_sum == ee.sum)
+    return; // Nothing has changed?
+
+  wifi.eeWriteData(64, (uint8_t*)&ee, sizeof(ee)); // WiFiManager already has an instance open, so use that at offset 64+
+}
+
+void eeRead()
+{
+  eeSet eeTest;
+
+  wifi.eeReadData(64, (uint8_t*)&eeTest, sizeof(eeSet));
+  if(eeTest.size != sizeof(eeSet)) return; // revert to defaults if struct size changes
+  uint16_t sum = eeTest.sum;
+  eeTest.sum = 0;
+  eeTest.sum = Fletcher16((uint8_t *)&eeTest, sizeof(eeSet));
+  if(eeTest.sum != sum) return; // revert to defaults if sum fails
+  memcpy(&ee, &eeTest, sizeof(eeSet));
+}
+
+uint16_t Fletcher16( uint8_t* data, int count)
+{
+   uint16_t sum1 = 0;
+   uint16_t sum2 = 0;
+
+   for( int index = 0; index < count; ++index )
+   {
+      sum1 = (sum1 + data[index]) % 255;
+      sum2 = (sum2 + sum1) % 255;
+   }
+
+   return (sum2 << 8) | sum1;
 }
