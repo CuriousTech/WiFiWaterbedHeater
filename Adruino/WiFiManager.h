@@ -40,8 +40,8 @@ public:
 
     boolean hasConnected();
     
-    String beginConfigMode(void);
-    void startWebConfig();
+    void beginConfigMode(void);
+    void startWebConfig(String ssid);
     
     String getSSID();
     String getPassword();
@@ -52,7 +52,8 @@ public:
 private:
     const int WM_DONE = 0;
     const int WM_WAIT = 10;
-    
+    bool _timeout;
+
     const String HTTP_404 = "HTTP/1.1 404 Not Found\r\n\r\n";
     const String HTTP_200 = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
     const String HTTP_HEAD = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>{v}</title>";
