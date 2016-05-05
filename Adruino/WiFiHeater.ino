@@ -31,21 +31,23 @@ SOFTWARE.
 #include "WiFiManager.h"
 #include <ESP8266WebServer.h>
 #include <OneWire.h>
-#include "time.h"
-#include "event.h"
+#include <WiFiUdp.h>
+#include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
+#include <Event.h>  // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/Event
+#include <dht.h> // http://www.github.com/markruys/arduino-DHT
 
 const char *controlPassword = "password"; // device password for modifying any settings
-const char *serverFile = "Waterbed";    // Creates /iot/Waterbed.php
 int serverPort = 82;                    // port fwd for fwdip.php
-const char *myHost = "www.yourdomain.com"; // php forwarding/time server (fwdip.php)
 
-#define LED       0  // back LED for debug
+#define EXPAN1    0  // side expansion pad
+#define EXPAN2    2  // side expansion pad
 #define ESP_LED   2  //Blue LED on ESP07 (on low)
-#define HEARTBEAT 2
-#define HEAT     12  // Also blue "HEAT" LED
+#define SDA       4
+#define SCL       5  // OLED
+#define HEAT     12  // Heater output
 #define BTN_UP   13
 #define DS18B20  14
-#define BEEP     15
+#define TONE     15  // Speaker.  Beeps on powerup, but can also be controlled by aother IoT or add an alarm clock.
 #define BTN_DN   16
 
 OneWire ds(DS18B20);
@@ -53,12 +55,23 @@ byte ds_addr[8];
 uint32_t lastIP;
 int nWrongPass;
 
-SSD1306 display(0x3c, 4, 5); // Initialize the oled display for address 0x3c, sda=4, sdc=5
+SSD1306 display(0x3C, SDA, SCL); // Initialize the oled display for address 0x3C, SDA=4, SCL=5 (is the OLED mislabelled?)
 bool bDisplay_on = true;
+bool bDisplay_AutoOff = false;
+
+DHT dht;
 
 WiFiManager wifi(0);  // AP page:  192.168.4.1
 extern MDNSResponder mdns;
 ESP8266WebServer server( serverPort );
+const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
+byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+WiFiUDP Udp;
+bool bNeedUpdate;
+uint8_t  dst;           // current dst
+
+uint16_t roomTemp;
+uint16_t rh;
 
 int httpPort = 80; // may be modified by open AP scan
 
@@ -104,14 +117,12 @@ eeSet ee = {
   },
 };
 
-int currentTemp = 999;
+int currentTemp = 850;
 int hiTemp; // current target
 int loTemp;
 bool bHeater = false;
 uint8_t schInd = 0;
-uint8_t dst = 0;
-
-eventHandler event(dataJson);
+String sMessage;
 
 String dataJson()
 {
@@ -127,9 +138,15 @@ String dataJson()
     s += schInd;
     s += ", \"on\": ";
     s += bHeater;
+    s += ", \"roomTemp\": ";
+    s += sDec(roomTemp);
+    s += ", \"rh\": ";
+    s += sDec(rh);
     s += "}";
     return s;
 }
+
+eventHandler event(dataJson);
 
 String ipString(IPAddress ip) // Convert IP to string
 {
@@ -145,15 +162,17 @@ String ipString(IPAddress ip) // Convert IP to string
 
 void parseParams()
 {
-  char temp[100];
+  static char temp[256];
   String password;
   int val;
   eeSet save;
+  int freq = 0;
+
   memcpy(&save, &ee, sizeof(ee));
 
   for ( uint8_t i = 0; i < server.args(); i++ )
   {
-    server.arg(i).toCharArray(temp, 100);
+    server.arg(i).toCharArray(temp, 256);
     String s = wifi.urldecode(temp);
     Serial.println( i + " " + server.argName ( i ) + ": " + s);
     int which = server.argName(i).charAt(1) - '0'; // limitation = 9
@@ -184,7 +203,7 @@ void parseParams()
           break;
       case 'Z': // TZ
           ee.tz = val;
-          resetClock();
+          getUdpTime();
           break;
       case 'S': // S0-7
           if(s.indexOf(':') >= 0) // if :, otherwise raw minutes
@@ -206,12 +225,19 @@ void parseParams()
       case 'N': // name
           s.toCharArray(ee.schNames[ which ], 15);
           break;
-      case 'W':   // Test the watchdog
-          digitalWrite(BEEP, b);
+      case 'm':  // message
+          sMessage = server.arg(i);
+          if(bDisplay_on == false)
+          {
+            bDisplay_on = true;
+            bDisplay_AutoOff = true;
+          }
           break;
-      case 'B':   // for PIC programming
-          pinMode(BEEP, b ? OUTPUT:INPUT);
-          pinMode(HEARTBEAT, b ? OUTPUT:INPUT);
+      case 'f': // frequency
+          freq = val;
+          break;
+      case 'b': // beep : ?f=1200&b=1000
+          Tone(TONE, freq, val);
           break;
     }
   }
@@ -239,7 +265,7 @@ void parseParams()
 
 void handleRoot() // Main webpage interface
 {
-  digitalWrite(LED, HIGH);
+//  digitalWrite(LED, HIGH);
 
   Serial.println("handleRoot");
 
@@ -255,18 +281,20 @@ void handleRoot() // Main webpage interface
     "<script type=\"text/javascript\">"
     "function startEvents()"
     "{"
-      "eventSource = new EventSource(\"events?i=60\");"
+      "eventSource = new EventSource(\"events?i=60&p=1\");"
       "eventSource.addEventListener('open', function(e){},false);"
       "eventSource.addEventListener('error', function(e){},false);"
       "eventSource.addEventListener('state',function(e){"
         "d = JSON.parse(e.data);"
-        "document.all.temp.innerHTML=d.temp+\"&degF\";"
+        "document.all.temp.innerHTML=d.temp;"
         "document.all.on.innerHTML=d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\";"
+        "document.all.rt.innerHTML=d.roomTemp;"
+        "document.all.rh.innerHTML=d.rh;"
       "},false)"
     "}"
     "setInterval(timer,1000);"
     "t=";
-    page += time(nullptr) - (ee.tz * 3600) - (dst * 3600) ; // set to GMT
+    page += now() - ((ee.tz + dst) * 3600); // set to GMT
     page +="000;function timer(){" // add 000 for ms
           "t+=1000;d=new Date(t);"
           "document.all.time.innerHTML=d.toLocaleTimeString()}"
@@ -281,23 +309,30 @@ void handleRoot() // Main webpage interface
             "<td align=\"center\" colspan=2><div id=\"time\">";
     page += timeFmt(true, true);
     page += "</div></td><td><div id=\"temp\">";
-    page += sDec(currentTemp) + "&degF </div></td><td><div id=\"on\">";
+    page += sDec(currentTemp) + "</div>&degF </td><td><div id=\"on\">";
     page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
     page += "</div></td></tr>"
     // Row 2
+            "<tr>"
+            "<td align=\"center\" colspan=2>Bedroom:<div id=\"rt\">";
+    page += sDec(roomTemp);
+    page += "</div>&degF</td><td><div id=\"rh\">";
+    page += sDec(rh);
+    page += "</div>% </td><td></div></td></tr>"
+    // Row 3
             "<tr>"
             "<td colspan=2>";
     page += valButton("TZ ", "Z", String(ee.tz) );
     page += "</td><td colspan=2>";
     page += button("OLED ", "OLED", bDisplay_on ? "OFF":"ON" );
     page += "</td></tr>"
-    // Row 3
+    // Row 4
             "<tr><td colspan=2>";
     page += vacaForm();
     page += "</td><td colspan=2>";
     page += button("Avg ", "A", ee.bAvg ? "OFF":"ON" );
     page += "</td></tr>"
-    // Row 4
+    // Row 5
             "<tr>"
             "<td colspan=2>";
     page += button("Schedule ", "C", String((ee.schedCnt < MAX_SCHED) ? (ee.schedCnt+1):ee.schedCnt) );
@@ -327,8 +362,8 @@ void handleRoot() // Main webpage interface
             "</table>"
             "</body></html>";
     server.send ( 200, "text/html", page );
-  
-  digitalWrite(LED, LOW);
+
+//  digitalWrite(LED, LOW);
 }
 
 String button(String lbl, String id, String text) // Up/down buttons
@@ -410,37 +445,30 @@ String vacaForm(void)
   return s;
 }
 
-// Set sec to 60 to remove seconds
-String timeFmt(bool do_sec, bool do_12)
+// Time in hh:mm[:ss][AM/PM]
+String timeFmt(bool do_sec, bool do_M)
 {
-  time_t t = time(nullptr);
-  tm *ptm = localtime(&t);
-
-  uint8_t h = ptm->tm_hour;
-  if(h == 0) h = 12;
-  else if( h > 12) h -= 12;
- 
   String r = "";
-  if(h <10) r = " ";
-  r += h;
+  if(hourFormat12() < 10) r = " ";
+  r += hourFormat12();
   r += ":";
-  if(ptm->tm_min < 10) r += "0";
-  r += ptm->tm_min;
+  if(minute() < 10) r += "0";
+  r += minute();
   if(do_sec)
   {
     r += ":";
-    if(ptm->tm_sec < 10) r += "0";
-    r += ptm->tm_sec;
+    if(second() < 10) r += "0";
+    r += second();
     r += " ";
   }
-  if(do_12)
+  if(do_M)
   {
-      r += (ptm->tm_hour > 12) ? "PM":"AM";
+      r += isPM() ? "PM":"AM";
   }
   return r;
 }
 
-void handleS() { // /s?x=y can be redirected to index
+void handleS() { // standard params, but no page
   Serial.println("handleS\n");
   parseParams();
 
@@ -487,35 +515,49 @@ void handleJson()
   page += ee.schedCnt;
   page += ", \"on\": ";
   page += bHeater;
+  page += ", \"roomTemp\": ";
+  page += sDec(roomTemp);
+  page += ", \"rh\": ";
+  page += sDec(rh);
   page += "}";
 
   server.send ( 200, "text/json", page );
 }
 
-// event streamer (assume keep-alive) (esp8266 2.1.0 can't handle this)
+// event streamer (assume keep-alive)
 void handleEvents()
 {
   char temp[100];
-  Serial.println("handleEvents");
+//  Serial.println("handleEvents");
   uint16_t interval = 60; // default interval
- 
+  uint8_t nType = 0;
+
   for ( uint8_t i = 0; i < server.args(); i++ ) {
     server.arg(i).toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
-    Serial.println( i + " " + server.argName ( i ) + ": " + s);
+//    Serial.println( i + " " + server.argName ( i ) + ": " + s);
     int val = s.toInt();
  
     switch( server.argName(i).charAt(0)  )
     {
       case 'i': // interval
-          interval = val;
-          break;
+        interval = val;
+        break;
+      case 'p': // push
+        nType = 1;
+        break;
+      case 'c': // critical
+        nType = 2;
+        break;
     }
   }
 
-  server.send( 200, "text/event-stream", "" );
-
-  event.set(server.client(), interval);
+  event.set(server.client(), interval, nType); // copying the client before the send makes it work with SDK 2.2.0
+  String content = "HTTP/1.1 200 OK\r\n"
+      "Connection: keep-alive\r\n"
+      "Access-Control-Allow-Origin: *\r\n"
+      "Content-Type: text/event-stream\r\n\r\n";
+  server.sendContent(content);
 }
 
 void handleNotFound() {
@@ -537,26 +579,17 @@ void handleNotFound() {
   server.send ( 404, "text/plain", message );
 }
 
-void resetClock()
-{
-  configTime((ee.tz * 3600) + (dst * 3600), 0, "0.us.pool.ntp.org", "pool.ntp.org", "time.nist.gov");
-}
-
 void setup()
 {
-  pinMode(LED, OUTPUT);
-  pinMode(BEEP, OUTPUT);
+  pinMode(TONE, OUTPUT);
+  digitalWrite(TONE, LOW);
   pinMode(BTN_UP, INPUT_PULLUP);
   pinMode(BTN_DN, INPUT); // IO16 has external pullup
   pinMode(HEAT, OUTPUT);
-  pinMode(HEARTBEAT, OUTPUT);
-
   digitalWrite(HEAT, HIGH); // high is off
-  digitalWrite(BEEP, HIGH); // disable watchdog
 
   // initialize dispaly
   display.init();
-  digitalWrite(HEARTBEAT, LOW);
 
   Serial.begin(115200);
 //  delay(3000);
@@ -583,14 +616,7 @@ void setup()
 //    server.send ( 200, "text/plain", "this works as well" );
 //  } );
   server.onNotFound ( handleNotFound );
-  digitalWrite(HEARTBEAT, HIGH);
   server.begin();
-
-  digitalWrite(BEEP, LOW); // beep
-  digitalWrite(BEEP, HIGH);  // this gets past the initial beep wait
-  digitalWrite(BEEP, LOW);
-  digitalWrite(BEEP, HIGH);
-  digitalWrite(BEEP, LOW); // enable watchdog
 
   if( ds.search(ds_addr) )
   {
@@ -609,70 +635,67 @@ void setup()
     Serial.println("No OneWire devices");
   }
 
-  digitalWrite(HEARTBEAT, LOW);
-  ctSetIp();
-  resetClock();
-  checkSched(true);  // initialize
+  getUdpTime();
+
+  Tone(TONE, 2600, 200);
+  dht.setup(0, DHT::DHT22);
 }
 
 void loop()
 {
   static uint8_t hour_save, min_save, sec_save;
-  static bool dstSet = false;
 
   mdns.update();
   server.handleClient();
   checkButtons();
 
-  time_t t = time(nullptr);
-  tm *ptm = localtime(&t);
+  if(bNeedUpdate)
+    if(checkUdpTime())
+      checkSched(true);  // initialize
 
-  if(sec_save != ptm->tm_sec) // only do stuff once per second
+  if(sec_save != second()) // only do stuff once per second
   {
-    sec_save = ptm->tm_sec;
-
-    if(dstSet == false && ptm->tm_year > 100) // startup DST fix
-    {
-      DST();
-      resetClock();
-      dstSet = true;
-    }
+    sec_save = second();
 
     checkTemp();
-
-    if(min_save != ptm->tm_min) // only do stuff once per minute
+    static uint8_t dht_cnt = 10;
+    if(--dht_cnt == 0)
     {
-      min_save = ptm->tm_min;
+      dht_cnt = 10;
+      dht.read();
+      roomTemp = (int)(dht.toFahrenheit(dht.getTemperature()) * 10);
+      rh = (int)(dht.getHumidity() * 10);
+    }
+    if(min_save != minute()) // only do stuff once per minute
+    {
+      min_save = minute();
       checkSched(false);        // check every minute for next schedule
-      if (hour_save != ptm->tm_hour) // update our IP and time daily (at 2AM for DST)
+      if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
       {
         eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
-        if( (hour_save = ptm->tm_hour) == 2)
+        if( (hour_save = hour()) == 2)
         {
-          DST();
-          resetClock();
+          getUdpTime();
         }
       }
     }
    
     if(nWrongPass)
       nWrongPass--;
-
     event.heartbeat();
-  
-    digitalWrite(HEARTBEAT, !digitalRead(HEARTBEAT));
   }
-  DrawScreen(ptm);
+  DrawScreen();
 }
 
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
-void DrawScreen(tm *ptm)
+void DrawScreen()
 {
   static int16_t ind;
   static bool blnk = false;
   static long last;
+  static int8_t msgCnt = 0;
 
   // draw the screen here
   display.clear();
@@ -691,19 +714,52 @@ void DrawScreen(tm *ptm)
     const char *ps = ee.bVaca ? "Vacation" : ee.schNames[schInd];
     display.drawString(90-(strlen(ps) << 2), 55, ps);
 
-    String s = timeFmt(true, true); // the scroller
-    s += "  ";
-    s += days[ptm->tm_wday];
-    s += " ";
-    s += String(ptm->tm_mday);
-    s += " ";
-    s += months[ptm->tm_mon];
-    s += "  ";
-    int len = s.length();
-    s = s + s;
+    String s;
+  
+    if(sMessage.length()) // message sent over wifi
+    {
+      s = sMessage + " " + sMessage; // just double it
+      if(msgCnt == 0) // starting
+      {
+        msgCnt = 3; // times to repeat message
+        ind = 0;
+      }
+    }
+    else
+    {
+      s = timeFmt(true, true); // the default scroller
+      s += "  ";
+      s += days[weekday()-1];
+      s += " ";
+      s += String(day());
+      s += " ";
+      s += months[month()-1];
+      s += "  ";
+      s += sDec(roomTemp);
+      s += "]F "; // <- that's a degree symbol
+      s += sDec(rh);
+      s += "% ";
 
+      int len = s.length();
+      s += s;
+    }
     int w = display.drawPropString(ind, 0, s ); // this returns the proportional text width
-    if( --ind < -(w)) ind = 0;
+    if( --ind < -(w))
+    {
+      if(msgCnt) // end of custom message display
+      {
+        if(--msgCnt == 0) // decrement times to repeat it
+        {
+          if(bDisplay_AutoOff) // if display was off originally off, turn it back off and clear message
+          {
+            bDisplay_AutoOff = false;
+            bDisplay_on = false;
+            sMessage = "";
+          }
+        }
+      }
+      ind = 0;
+    }
 
     String temp = sDec(currentTemp) + "]"; // <- that's a degree symbol
     display.drawPropString(2, 33, temp );
@@ -722,7 +778,9 @@ void DrawScreen(tm *ptm)
 // Check temp to turn heater on and off
 void checkTemp()
 {
-  static uint16_t array[10] = {800,800,800,800,800,800,800,800,800,800};
+#define TEMPS 16
+  static uint16_t array[TEMPS];
+  static bool bInit = false;
   static uint8_t idx = 0;
   static uint8_t state = 0;
 
@@ -750,7 +808,7 @@ void checkTemp()
   if(!present)      // safety
   {
     bHeater = false;
-    digitalWrite(HEAT, LOW);
+    digitalWrite(HEAT, !bHeater);
     return;
   }
 
@@ -760,7 +818,7 @@ void checkTemp()
   if(OneWire::crc8( data, 8) != data[8])  // bad CRC
   {
     bHeater = false;
-    digitalWrite(HEAT, LOW);
+    digitalWrite(HEAT, !bHeater);
     Serial.println("Invalid CRC");
     event.print("Invalid CRC");
     return;
@@ -769,7 +827,7 @@ void checkTemp()
   uint16_t raw = (data[1] << 8) | data[0];
 
   if(raw > 630 || raw < 200){ // first reading is always 1360 (0x550)
-    Serial.print("err ");
+    Serial.print("DS err ");
     Serial.println(raw);
     return;
   }
@@ -777,36 +835,25 @@ void checkTemp()
 //array[idx] = (( raw * 625) / 1000;  // to 10x celcius
   array[idx] = (raw * 1125) / 1000 + 320; // 10x fahrenheit
 
-  if(++idx >= 10) idx = 0;
-/*
-  uint16_t a1 = array[0];
-  uint16_t a2 = 0;
-  uint8_t cnt1 = 0;
-  uint8_t cnt2 = 0;
-
-  for(int i = 1; i < 10; i++)  // cheap more frequent (of 2) finder
+  if(!bInit) // fill it the first time
   {
-    if(array[i] == a1)
-      cnt1++;
-    else
-    {
-      a2 = array[i];
-      cnt2++;
-    }
+    for(int i = 0; i < TEMPS; i++)
+      array[i] = array[idx];
+    bInit = true;
   }
-  uint16_t newTemp = (cnt1 >= cnt2) ? a1:a2;
-*/
+
+  if(++idx >= TEMPS) idx = 0;
 
   uint16_t newTemp = 0;
 
-  for(int i = 0; i < 10; i++)  // cheap more frequent (of 2) finder
+  for(int i = 0; i < TEMPS; i++)
     newTemp += array[i];
-  newTemp /= 10;
+  newTemp /= TEMPS;
 
   if(newTemp != currentTemp)
   {
     currentTemp = newTemp;
-    event.push();
+    event.pushInstant();
   }
   Serial.print("Temp: ");
   Serial.println(currentTemp);
@@ -908,10 +955,7 @@ void checkLimits()
 
 void checkSched(bool bUpdate)
 {
-  time_t t = time(nullptr);
-  tm *ptm = localtime(&t);
-
-  long timeNow = (ptm->tm_hour*60) + ptm->tm_min;
+  long timeNow = (hour()*60) + minute();
 
   if(bUpdate)
   {
@@ -954,10 +998,7 @@ void checkSched(bool bUpdate)
       range = ee.schedule[s2].timeSch - start;
     }
 
-    time_t t = time(nullptr);
-    tm *ptm = localtime(&t);
-
-    int m = (ptm->tm_hour * 60) + ptm->tm_min; // current TOD in minutes
+    int m = (hour() * 60) + minute(); // current TOD in minutes
 
     if(m < start) // offset by start of current schedule
       m -= start - (24*60); // rollover
@@ -978,59 +1019,32 @@ int tween(int t1, int t2, int m, int range)
   return t + t1;
 }
 
-// Setup a php script on my server to send traffic here from /iot/waterbed.php, plus sync time
-// PHP script: https://github.com/CuriousTech/ESP07_Multi/blob/master/fwdip.php
-bool ctSetIp()
-{
-  WiFiClient client;
-  if (!client.connect(myHost, httpPort))
-  {
-    Serial.println("Host ip connection failed");
-    delay(100);
-    return false;
-  }
-
-  String url = "/fwdip.php?name=";
-  url += serverFile;
-  url += "&port=";
-  url += serverPort;
-
-  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-               "Host: " + myHost + "\r\n" + 
-               "Connection: close\r\n\r\n");
-
-  delay(10);
-  String line = client.readStringUntil('\n');
-  // Read all the lines of the reply from server
-  while(client.available())
-  {
-    line = client.readStringUntil('\n');
-    line.trim();
-    if(line.startsWith("IP:")) // I don't need my global IP
-    {
-    }
-    else if(line.startsWith("Time:")) // Time from the server in a simple format
-    {
-    }
-  }
- 
-  client.stop();
-  return true;
-}
-
 void DST() // 2016 starts 2AM Mar 13, ends Nov 6
 {
-  time_t t = time(nullptr);
-  tm *ptm = localtime(&t);
+  tmElements_t tm;
+  breakTime(now(), tm);
+  // save current time
+  uint8_t m = tm.Month;
+  int8_t d = tm.Day;
+  int8_t dow = tm.Wday;
 
-  uint8_t m = ptm->tm_mon; // 0-11
-  int8_t d = ptm->tm_mday; // 1-30
-  int8_t dow = ptm->tm_wday; // 0-6
+  tm.Month = 3; // set month = Mar
+  tm.Day = 14; // day of month = 14
+  breakTime(makeTime(tm), tm); // convert to get weekday
 
-  if ((m  >  2 && m < 10 ) || 
-      (m ==  2 && d >= 8 && dow == 0 && ptm->tm_hour >= 2) ||  // DST starts 2nd Sunday of March;  2am
-      (m == 10 && d <  8 && dow >  0) ||
-      (m == 10 && d <  8 && dow == 0 && ptm->tm_hour < 2))   // DST ends 1st Sunday of November; 2am
+  uint8_t day_of_mar = (7 - tm.Wday) + 8; // DST = 2nd Sunday
+
+  tm.Month = 11; // set month = Nov (0-11)
+  tm.Day = 7; // day of month = 7 (1-30)
+  breakTime(makeTime(tm), tm); // convert to get weekday
+
+  uint8_t day_of_nov = (7 - tm.Wday) + 1;
+
+  if ((m  >  3 && m < 11 ) ||
+      (m ==  3 && d > day_of_mar) ||
+      (m ==  3 && d == day_of_mar && hour() >= 2) ||  // DST starts 2nd Sunday of March;  2am
+      (m == 11 && d <  day_of_nov) ||
+      (m == 11 && d == day_of_nov && hour() < 2))   // DST ends 1st Sunday of November; 2am
    dst = 1;
  else
    dst = 0;
@@ -1073,4 +1087,87 @@ uint16_t Fletcher16( uint8_t* data, int count)
    }
 
    return (sum2 << 8) | sum1;
+}
+
+void Tone(uint8_t _pin, unsigned int frequency, unsigned long duration)
+{
+  analogWriteFreq(frequency);
+  analogWrite(_pin, 500);
+  delay(duration);
+  analogWrite(_pin,0);
+}
+
+void getUdpTime()
+{
+  if(bNeedUpdate) return;
+  Serial.println("getUdpTime");
+  Udp.begin(2390);
+  // set all bytes in the buffer to 0
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  // Initialize values needed to form NTP request
+  // (see URL above for details on the packets)
+  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+  packetBuffer[1] = 0;     // Stratum, or type of clock
+  packetBuffer[2] = 6;     // Polling Interval
+  packetBuffer[3] = 0xEC;  // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12]  = 49;
+  packetBuffer[13]  = 0x4E;
+  packetBuffer[14]  = 49;
+  packetBuffer[15]  = 52;
+  
+  // all NTP fields have been given values, now
+  // you can send a packet requesting a timestamp:
+  // time.nist.gov
+  Udp.beginPacket("0.us.pool.ntp.org", 123); //NTP requests are to port 123
+  Udp.write(packetBuffer, NTP_PACKET_SIZE);
+  Udp.endPacket();
+  bNeedUpdate = true;
+}
+
+bool checkUdpTime()
+{
+  static int retry = 0;
+
+  if(!Udp.parsePacket())
+  {
+    if(++retry > 500)
+     {
+        getUdpTime();
+        retry = 0;
+     }
+    return false;
+  }
+  Serial.println("checkUdpTime good");
+
+  // We've received a packet, read the data from it
+  Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+
+  Udp.stop();
+  // the timestamp starts at byte 40 of the received packet and is four bytes,
+  // or two words, long. First, extract the two words:
+
+  unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+  unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+  unsigned long secsSince1900 = highWord << 16 | lowWord;
+  // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
+  const unsigned long seventyYears = 2208988800UL;
+  long timeZoneOffset = 3600 * (ee.tz + dst);
+  unsigned long epoch = secsSince1900 - seventyYears + timeZoneOffset + 1; // bump 1 second
+
+  // Grab the fraction
+//  highWord = word(packetBuffer[44], packetBuffer[45]);
+//  lowWord = word(packetBuffer[46], packetBuffer[47]);
+//  unsigned long d = (highWord << 16 | lowWord) / 4295000; // convert to ms
+
+  setTime(epoch);
+  DST(); // check the DST and reset clock
+  timeZoneOffset = 3600 * (ee.tz + dst);
+  epoch = secsSince1900 - seventyYears + timeZoneOffset + 1; // bump 1 second
+  setTime(epoch);
+  
+//  Serial.print("Time ");
+//  Serial.println(timeFmt(true, true));
+  bNeedUpdate = false;
+  return true;
 }
