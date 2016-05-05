@@ -12,7 +12,7 @@
 #include "WiFiManager.h"
 #include "ssd1306_i2c.h"
 #include "icons.h"
-#include "time.h"
+#include <TimeLib.h>
 
 extern SSD1306 display;
 extern int httpPort;
@@ -91,7 +91,7 @@ String WiFiManager::getEEPROMString(int start, int len) {
     for (int i = _eepromStart + start; i < _eepromStart + start + len; i++) {
         //DEBUG_PRINT(i);
         char c = char(EEPROM.read(i));
-        if(c == 0 || c == 255) break; // fix for 2.0.0
+        if(c == 0 ||c == 255) break; // fix for 2.0.0
         string += c;
     }
     return string;
@@ -105,7 +105,6 @@ void WiFiManager::setEEPROMString(int start, int len, String string) {
             c = string[si];
 //            DEBUG_PRINT("Wrote: ");
 //            DEBUG_PRINT(c);
-            
         } else {
             c = 0;
         }
@@ -172,26 +171,22 @@ void WiFiManager::startWebConfig(String ssid) {
     display.print("Server started");
     DEBUG_PRINT("Server started");
 
-    time_t t = time(nullptr);
-    tm *ptm = localtime(&t);
-
     uint8_t s;
-    uint8_t m = ptm->tm_min;
+    uint8_t m = minute();
 
     _timeout = true;
     while(serverLoop() == WM_WAIT) {      //looping
-      t = time(nullptr);
-      ptm = localtime(&t);
-      if(s != ptm->tm_sec) // pulse LED
+/*    if(s != second()) // pulse LED
       {
-        s = ptm->tm_sec;
+        s = second();
         digitalWrite(2, !digitalRead(2)); // Toggle blue LED
       }
+*/
       if(_timeout)
       {
-        if(m != ptm->tm_min )
+        if(m != minute())
         {
-          m = ptm->tm_min;
+          m = minute();
           int n = WiFi.scanNetworks();
           if(n){
             for (int i = 0; i < n; ++i)
@@ -233,7 +228,7 @@ int WiFiManager::serverLoop()
     }
 
     DEBUG_PRINT("New client");
-
+    
     // Wait for data from client to become available
     while(client.connected() && !client.available()){
         delay(1);
@@ -288,6 +283,7 @@ int WiFiManager::serverLoop()
         s += HTTP_END;
         
         DEBUG_PRINT("Sending config page");
+        _timeout = false;
     }
     else if ( req.startsWith("/s") ) {
         String qssid;
@@ -374,6 +370,11 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
     String sSSID = getSSID();
     int ind = 0;
 
+    Serial.print("Cfg SSID: ");
+    Serial.print(sSSID);
+    Serial.print(" ");
+    Serial.println(sSSID.length());
+
     display.setFontScale2x2(false);
     if (nScan == 0) {
         Serial.println( "No APs found" );
@@ -384,8 +385,7 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
         {
             Serial.print(WiFi.SSID(i));
             Serial.print(" ");
-            Serial.println(WiFi.encryptionType(i));
-            display.print(WiFi.SSID(i));
+
             if(WiFi.encryptionType(i) == 7 /*&& strncmp(WiFi.SSID(i),"Chromecast",6) != 0*/)
             {
               display.drawString(128-8, 56, "O");
@@ -394,8 +394,11 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
             else if( sSSID == WiFi.SSID(i) ){ // The saved AP was found
               bFound  = true;
               display.drawString(128-8, 56, "<");
-              Serial.println(" Cfg AP found");
+              Serial.print("(Cfg) ");
             }
+
+            Serial.println(WiFi.encryptionType(i));
+            display.print(WiFi.SSID(i));
         }
   }
 
@@ -427,7 +430,7 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
         Serial.print(WiFi.SSID(i));
         display.print(String(WiFi.SSID(i)) + "...");
         char szSSID[64];
-        WiFi.SSID(i).toCharArray(szSSID, 64);
+        WiFi.SSID(i).toCharArray(szSSID, 64); // fix for 2.0.0
         WiFi.begin(szSSID);
         for(int n = 0; n < 50 && WiFi.status() != WL_CONNECTED; n++)
         {
@@ -461,8 +464,8 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
     if (WiFi.status() != WL_CONNECTED)
     {
       Serial.println("Open WiFi failed");
-      display.print("Open WiFi failed");
       Serial.println("Switch to SoftAP");
+      display.print("Open WiFi failed");
       display.print("Switch to SoftAP");
       autoConnect("ESP8266");
     }
