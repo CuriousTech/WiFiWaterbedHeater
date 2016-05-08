@@ -126,7 +126,7 @@ String sMessage;
 
 String dataJson()
 {
-    String s = "{\"temp\": ";
+    String s = "{\"waterTemp\": ";
     s += sDec(currentTemp);
     s += ",\"setTemp\": ";
     s += sDec(ee.schedule[schInd].setTemp);
@@ -138,7 +138,7 @@ String dataJson()
     s += schInd;
     s += ", \"on\": ";
     s += bHeater;
-    s += ", \"roomTemp\": ";
+    s += ", \"temp\": ";
     s += sDec(roomTemp);
     s += ", \"rh\": ";
     s += sDec(rh);
@@ -286,9 +286,9 @@ void handleRoot() // Main webpage interface
       "eventSource.addEventListener('error', function(e){},false);"
       "eventSource.addEventListener('state',function(e){"
         "d = JSON.parse(e.data);"
-        "document.all.temp.innerHTML=d.temp;"
+        "document.all.temp.innerHTML=d.waterTemp;"
         "document.all.on.innerHTML=d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\";"
-        "document.all.rt.innerHTML=d.roomTemp;"
+        "document.all.rt.innerHTML=d.temp;"
         "document.all.rh.innerHTML=d.rh;"
       "},false)"
     "}"
@@ -503,7 +503,7 @@ void handleJson()
     page += sDec(ee.schedule[i].thresh);
     page += ", ";
   }
-  page += "\"temp\": ";
+  page += "\"waterTemp\": ";
   page += sDec(currentTemp);
   page += ", \"hiTemp\": ";
   page += sDec(hiTemp);
@@ -515,7 +515,7 @@ void handleJson()
   page += ee.schedCnt;
   page += ", \"on\": ";
   page += bHeater;
-  page += ", \"roomTemp\": ";
+  page += ", \"temp\": ";
   page += sDec(roomTemp);
   page += ", \"rh\": ";
   page += sDec(rh);
@@ -663,8 +663,11 @@ void loop()
     {
       dht_cnt = 10;
       dht.read();
-      roomTemp = (int)(dht.toFahrenheit(dht.getTemperature()) * 10);
-      rh = (int)(dht.getHumidity() * 10);
+      if(dht.getStatusString() == "OK")
+      {
+        roomTemp = (int)(dht.toFahrenheit(dht.getTemperature()) * 10);
+        rh = (int)(dht.getHumidity() * 10);
+      }
     }
     if(min_save != minute()) // only do stuff once per minute
     {
@@ -741,7 +744,7 @@ void DrawScreen()
       s += "% ";
 
       int len = s.length();
-      s += s;
+      s = s + s;
     }
     int w = display.drawPropString(ind, 0, s ); // this returns the proportional text width
     if( --ind < -(w))
