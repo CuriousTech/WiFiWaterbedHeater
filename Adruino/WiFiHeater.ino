@@ -34,10 +34,10 @@ SOFTWARE.
 #include <WiFiUdp.h>
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
 #include <Event.h>  // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/Event
-#include <dht.h> // http://www.github.com/markruys/arduino-DHT
+#include <DHT.h>  // Library Manager -> Adafruit DHT sensor library
 
 const char *controlPassword = "password"; // device password for modifying any settings
-int serverPort = 82;                    // port fwd for fwdip.php
+int serverPort = 82;                     // port to access page globally
 
 #define EXPAN1    0  // side expansion pad
 #define EXPAN2    2  // side expansion pad
@@ -59,7 +59,7 @@ SSD1306 display(0x3C, SDA, SCL); // Initialize the oled display for address 0x3C
 bool bDisplay_on = true;
 bool bDisplay_AutoOff = false;
 
-DHT dht;
+DHT dht(EXPAN1, DHT22);
 
 WiFiManager wifi(0);  // AP page:  192.168.4.1
 extern MDNSResponder mdns;
@@ -286,10 +286,10 @@ void handleRoot() // Main webpage interface
       "eventSource.addEventListener('error', function(e){},false);"
       "eventSource.addEventListener('state',function(e){"
         "d = JSON.parse(e.data);"
-        "document.all.temp.innerHTML=d.waterTemp;"
+        "document.all.temp.innerHTML=d.waterTemp+'&degF';"
         "document.all.on.innerHTML=d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\";"
-        "document.all.rt.innerHTML=d.temp;"
-        "document.all.rh.innerHTML=d.rh;"
+        "document.all.rt.innerHTML= 'Bedroom: '+d.temp+'&degF';"
+        "document.all.rh.innerHTML=d.rh+'%';"
       "},false)"
     "}"
     "setInterval(timer,1000);"
@@ -308,17 +308,17 @@ void handleRoot() // Main webpage interface
     page += "<tr>"
             "<td align=\"center\" colspan=2><div id=\"time\">";
     page += timeFmt(true, true);
-    page += "</div></td><td><div id=\"temp\">";
-    page += sDec(currentTemp) + "</div>&degF </td><td><div id=\"on\">";
+    page += "</div></td><td><div id=\"temp\"> ";
+    page += sDec(currentTemp) + "&degF</div> </td><td><div id=\"on\">";
     page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
     page += "</div></td></tr>"
     // Row 2
             "<tr>"
-            "<td align=\"center\" colspan=2>Bedroom:<div id=\"rt\">";
+            "<td align=\"center\" colspan=2>Bedroom: </td><td><div id=\"rt\">";
     page += sDec(roomTemp);
-    page += "</div>&degF</td><td><div id=\"rh\">";
+    page += "&degF</div></td><td><div id=\"rh\">";
     page += sDec(rh);
-    page += "</div>% </td><td></div></td></tr>"
+    page += "%</div> </td></tr>"
     // Row 3
             "<tr>"
             "<td colspan=2>";
@@ -342,7 +342,7 @@ void handleRoot() // Main webpage interface
     page += button("Adjust ", "D" + String( schInd ), "Dn");
     page += "</td></tr>"
     // Row 5
-            "<tr><td align=\"left\">Name</td><td align=\"left\">Time</td><td align=\"left\">Temp</td><td width=\"100px\" align=\"left\">Threshold</td></tr>";
+            "<tr><td align=\"left\">Name</td><td align=\"left\">Time</td><td align=\"left\">Temp</td><td width=\"99px\" align=\"left\">Threshold</td></tr>";
     // Row 6-(7~13)
     for(int i = 0; i < ee.schedCnt; i++)
     {
@@ -638,7 +638,7 @@ void setup()
   getUdpTime();
 
   Tone(TONE, 2600, 200);
-  dht.setup(0, DHT::DHT22);
+  dht.begin();
 }
 
 void loop()
@@ -662,12 +662,8 @@ void loop()
     if(--dht_cnt == 0)
     {
       dht_cnt = 10;
-      dht.read();
-      if(dht.getStatusString() == "OK")
-      {
-        roomTemp = (int)(dht.toFahrenheit(dht.getTemperature()) * 10);
-        rh = (int)(dht.getHumidity() * 10);
-      }
+      rh = dht.readHumidity() * 10;
+      roomTemp = dht.readTemperature(true) * 10;
     }
     if(min_save != minute()) // only do stuff once per minute
     {
