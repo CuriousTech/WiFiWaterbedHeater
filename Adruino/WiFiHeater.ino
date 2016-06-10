@@ -22,8 +22,7 @@ SOFTWARE.
 */
 
 #include <Wire.h>
-#include "ssd1306_i2c.h"
-#include "icons.h"
+#include <ssd1306_i2c.h> // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/ssd1306_i2c
 
 #include <WiFiClient.h>
 #include <EEPROM.h>
@@ -34,10 +33,10 @@ SOFTWARE.
 #include <WiFiUdp.h>
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
 #include <Event.h>  // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/Event
-#include <DHT.h>  // Library Manager -> Adafruit DHT sensor library
+#include <DHT.h>  // http://www.github.com/markruys/arduino-DHT
 
 const char *controlPassword = "password"; // device password for modifying any settings
-int serverPort = 82;                     // port to access page globally
+int serverPort = 82;                    // port fwd for fwdip.php
 
 #define EXPAN1    0  // side expansion pad
 #define EXPAN2    2  // side expansion pad
@@ -57,12 +56,11 @@ int nWrongPass;
 
 SSD1306 display(0x3C, SDA, SCL); // Initialize the oled display for address 0x3C, SDA=4, SCL=5 (is the OLED mislabelled?)
 bool bDisplay_on = true;
-bool bDisplay_AutoOff = false;
+int displayOnTimer;
 
-DHT dht(EXPAN1, DHT22);
+DHT dht;
 
 WiFiManager wifi(0);  // AP page:  192.168.4.1
-extern MDNSResponder mdns;
 ESP8266WebServer server( serverPort );
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
@@ -230,7 +228,7 @@ void parseParams()
           if(bDisplay_on == false)
           {
             bDisplay_on = true;
-            bDisplay_AutoOff = true;
+            displayOnTimer = 60;
           }
           break;
       case 'f': // frequency
@@ -252,7 +250,12 @@ void parseParams()
       nWrongPass <<= 1;
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
-    event.print("HackIP=" + ipString(ip) ); // log attempts
+    String data = "{ip:\"";
+    data += ipString(ip);
+    data += "\",pass:\"";
+    data += password;
+    data += "\"}";
+    event.push("hack", data); // log attempts
   }
 
   if(nWrongPass) memcpy(&ee, &save, sizeof(ee)); // undo any changes
@@ -552,12 +555,12 @@ void handleEvents()
     }
   }
 
-  event.set(server.client(), interval, nType); // copying the client before the send makes it work with SDK 2.2.0
   String content = "HTTP/1.1 200 OK\r\n"
       "Connection: keep-alive\r\n"
       "Access-Control-Allow-Origin: *\r\n"
       "Content-Type: text/event-stream\r\n\r\n";
   server.sendContent(content);
+  event.set(server.client(), interval, nType); // copying the client before the send makes it work with SDK 2.2.0
 }
 
 void handleNotFound() {
@@ -590,12 +593,13 @@ void setup()
 
   // initialize dispaly
   display.init();
+  display.flipScreenVertically();
 
   Serial.begin(115200);
 //  delay(3000);
   Serial.println();
-  Serial.println();
 
+  WiFi.hostname("waterbed");
   wifi.autoConnect("Waterbed"); // Tries all open APs, then starts softAP mode for config
   eeRead(); // don't access EE before WiFi init
 
@@ -604,7 +608,7 @@ void setup()
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
-  if ( mdns.begin ( "esp8266", WiFi.localIP() ) ) {
+  if ( MDNS.begin ( "waterbed", WiFi.localIP() ) ) {
     Serial.println ( "MDNS responder started" );
   }
 
@@ -617,6 +621,7 @@ void setup()
 //  } );
   server.onNotFound ( handleNotFound );
   server.begin();
+  MDNS.addService("http", "tcp", serverPort);
 
   if( ds.search(ds_addr) )
   {
@@ -638,14 +643,14 @@ void setup()
   getUdpTime();
 
   Tone(TONE, 2600, 200);
-  dht.begin();
+  dht.setup(EXPAN1, DHT::DHT22);
 }
 
 void loop()
 {
   static uint8_t hour_save, min_save, sec_save;
 
-  mdns.update();
+  MDNS.update();
   server.handleClient();
   checkButtons();
 
@@ -662,8 +667,12 @@ void loop()
     if(--dht_cnt == 0)
     {
       dht_cnt = 10;
-      rh = dht.readHumidity() * 10;
-      roomTemp = dht.readTemperature(true) * 10;
+      float r = dht.getHumidity();
+      if(dht.getStatus() == DHT::ERROR_NONE)
+      {
+         rh = r * 10;
+         roomTemp = dht.toFahrenheit(dht.getTemperature()) * 10;
+      }
     }
     if(min_save != minute()) // only do stuff once per minute
     {
@@ -678,7 +687,11 @@ void loop()
         }
       }
     }
-   
+    if(displayOnTimer)
+    {
+      if(--displayOnTimer == 0)
+        bDisplay_on = false;
+    }
     if(nWrongPass)
       nWrongPass--;
     event.heartbeat();
@@ -739,7 +752,6 @@ void DrawScreen()
       s += sDec(rh);
       s += "% ";
 
-      int len = s.length();
       s = s + s;
     }
     int w = display.drawPropString(ind, 0, s ); // this returns the proportional text width
@@ -749,12 +761,7 @@ void DrawScreen()
       {
         if(--msgCnt == 0) // decrement times to repeat it
         {
-          if(bDisplay_AutoOff) // if display was off originally off, turn it back off and clear message
-          {
-            bDisplay_AutoOff = false;
-            bDisplay_on = false;
             sMessage = "";
-          }
         }
       }
       ind = 0;
@@ -898,6 +905,8 @@ void checkButtons()
       {
         changeTemp(1);
         lRepeatMillis = millis(); // initial increment
+        if(bDisplay_on == false)
+          displayOnTimer = 30;
         bDisplay_on = true;
       }
     }
@@ -907,6 +916,8 @@ void checkButtons()
       {
         changeTemp(1);
         lRepeatMillis = millis();
+        if(bDisplay_on == false)
+          displayOnTimer = 30;
         bDisplay_on = true;
       }
     }
