@@ -55,7 +55,6 @@ uint32_t lastIP;
 int nWrongPass;
 
 SSD1306 display(0x3C, SDA, SCL); // Initialize the oled display for address 0x3C, SDA=4, SCL=5 (is the OLED mislabelled?)
-bool bDisplay_on = true;
 int displayOnTimer;
 
 DHT dht;
@@ -88,11 +87,13 @@ struct eeSet // EEPROM backed data
   uint16_t size;          // if size changes, use defauls
   uint16_t sum;           // if sum is diiferent from memory struct, write
   uint16_t vacaTemp;       // vacation temp
-  int8_t   tz;            // Timezone offset from your global server
-  uint8_t  schedCnt;    // number of active scedules
-  uint8_t  bVaca;         // vacation enabled
-  uint8_t  bAvg;         // average target between schedules
-  char     schNames[MAX_SCHED][16]; // 128  names for small display
+  int8_t  tz;            // Timezone offset from your global server
+  uint8_t schedCnt;    // number of active scedules
+  bool    bVaca;         // vacation enabled
+  bool    bAvg;         // average target between schedules
+  bool    bEnableOLED;
+  bool    bRes;
+  char    schNames[MAX_SCHED][16]; // 128  names for small display
   Sched   schedule[MAX_SCHED];  // 48 bytes
 };
 
@@ -100,14 +101,17 @@ eeSet ee = {
   sizeof(eeSet),
   0xAAAA,
   650, -5, // vacaTemp, TZ
-  4, 0,                   // active schedules, vacation mode
-  0,                   // average
+  4,
+  false,                   // active schedules, vacation mode
+  false,                   // average
+  true,                   // OLED
+  false,                   // res
   {"Morning", "Noon", "Day", "Night", "Sch5", "Sch6", "Sch7", "Sch8"},
   {
-    {820,  7*60, 5, 0},  // temp, time, thresh, wday
+    {830,  7*60, 5, 0},  // temp, time, thresh, wday
     {810, 11*60, 3, 0},
     {810, 17*60, 3, 0},
-    {820, 20*60, 3, 0},
+    {835, 20*60, 3, 0},
     {830,  0*60, 3, 0},
     {830,  0*60, 3, 0},
     {830,  0*60, 3, 0},
@@ -146,27 +150,47 @@ String dataJson()
 
 eventHandler event(dataJson);
 
-String ipString(IPAddress ip) // Convert IP to string
-{
-  String sip = String(ip[0]);
-  sip += ".";
-  sip += ip[1];
-  sip += ".";
-  sip += ip[2];
-  sip += ".";
-  sip += ip[3];
-  return sip;
-}
-
 void parseParams()
 {
   static char temp[256];
   String password;
   int val;
-  eeSet save;
   int freq = 0;
 
-  memcpy(&save, &ee, sizeof(ee));
+  for ( uint8_t i = 0; i < server.args(); i++ ) // get password first
+  {
+    server.arg(i).toCharArray(temp, 256);
+    String s = wifi.urldecode(temp);
+
+    switch( server.argName(i).charAt(0)  )
+    {
+      case 'k': // key
+          password = s;
+          break;
+    }
+  }
+
+  uint32_t ip = server.client().remoteIP();
+
+  if(server.args() && (password != controlPassword) )
+  {
+    if(nWrongPass == 0)
+      nWrongPass = 10;
+    else if((nWrongPass & 0xFFFFF000) == 0 ) // time doubles for every high speed wrong password attempt.  Max 1 hour
+      nWrongPass <<= 1;
+    if(ip != lastIP)  // if different IP drop it down
+       nWrongPass = 10;
+    String data = "{\"ip\":\"";
+    data += server.client().remoteIP().toString();
+    data += "\",\"pass\":\"";
+    data += password;
+    data += "\"}";
+    event.push("hack", data); // log attempts
+    lastIP = ip;
+    return;
+  }
+
+  lastIP = ip;
 
   for ( uint8_t i = 0; i < server.args(); i++ )
   {
@@ -176,20 +200,17 @@ void parseParams()
     int which = server.argName(i).charAt(1) - '0'; // limitation = 9
     if(which >= MAX_SCHED) which = MAX_SCHED - 1; // safety
     val = s.toInt();
-    bool b = (s == "ON") ? true:false;
+    bool b = (s == "true" || s == "ON") ? true:false;
 
     switch( server.argName(i).charAt(0)  )
     {
-      case 'k': // key
-          password = s;
-          break;
       case 'D': // D0
           ee.schedule[which].setTemp -= 1; // -0.1
           break;
       case 'U': // U0
           ee.schedule[which].setTemp += 1;
           break;
-      case 'C': // C 
+      case 'C': // C
           ee.schedCnt = val;
           if(ee.schedCnt > MAX_SCHED) ee.schedCnt = MAX_SCHED;
           break;
@@ -209,7 +230,7 @@ void parseParams()
           ee.schedule[which].timeSch = val;
           break;
       case 'O': // OLED
-          bDisplay_on = b;
+          ee.bEnableOLED = b;
           break;
       case 'V':     // vacation V0/V1
           if(which)
@@ -225,9 +246,8 @@ void parseParams()
           break;
       case 'm':  // message
           sMessage = server.arg(i);
-          if(bDisplay_on == false)
+          if(ee.bEnableOLED == false)
           {
-            bDisplay_on = true;
             displayOnTimer = 60;
           }
           break;
@@ -239,28 +259,6 @@ void parseParams()
           break;
     }
   }
-
-  uint32_t ip = server.client().remoteIP();
-
-  if(server.args() && (password != controlPassword) )
-  {
-    if(nWrongPass == 0)
-      nWrongPass = 10;
-    else if((nWrongPass & 0xFFFFF000) == 0 ) // time doubles for every high speed wrong password attempt.  Max 1 hour
-      nWrongPass <<= 1;
-    if(ip != lastIP)  // if different IP drop it down
-       nWrongPass = 10;
-    String data = "{ip:\"";
-    data += ipString(ip);
-    data += "\",pass:\"";
-    data += password;
-    data += "\"}";
-    event.push("hack", data); // log attempts
-  }
-
-  if(nWrongPass) memcpy(&ee, &save, sizeof(ee)); // undo any changes
-
-  lastIP = ip;
 
   checkLimits();      // constrain and check new values
   checkSched(true);   // reconfigure to new schedule
@@ -277,12 +275,28 @@ void handleRoot() // Main webpage interface
   String page;
   
   page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
-    "<title>WiFi Waterbed Heater</title>"
-    "<style>div,input {margin-bottom: 5px;}body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
+    "<title>WiFi Waterbed Heater</title>\n"
+    "<style type=\"text/css\">\n"
+    "table,input{\n"
+    "border-radius: 5px;\n"
+    "box-shadow: 2px 2px 12px #000000;\n"
+    "background-image: -moz-linear-gradient(top, #dfffff, #5050ff);\n"
+    "background-image: -ms-linear-gradient(top, #dfffff, #5050ff);\n"
+    "background-image: -o-linear-gradient(top, #dfffff, #5050ff);\n"
+    "background-image: -webkit-linear-gradient(top, #dfffff, #5050ff);\n"
+    "background-image: linear-gradient(top, #dfffff, #5050ff);\n"
+    "background-clip: padding-box;\n"
+    "}\n"
+    "body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}\n"
+    "</style>\n"
 
     "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>"
     "<script type=\"text/javascript\">"
-    "function startEvents()"
+    "oledon=";
+  page += ee.bEnableOLED;
+  page += ";avg=";
+  page += ee.bAvg;
+  page += ";function startEvents()"
     "{"
       "eventSource = new EventSource(\"events?i=60&p=1\");"
       "eventSource.addEventListener('open', function(e){},false);"
@@ -294,7 +308,17 @@ void handleRoot() // Main webpage interface
         "document.all.rt.innerHTML= 'Bedroom: '+d.temp+'&degF';"
         "document.all.rh.innerHTML=d.rh+'%';"
       "},false)"
-    "}"
+    "}\n"
+    "function oled(){"
+      "oledon=!oledon;"
+      "$.post(\"s\", { O: oledon, key: document.all.myKey.value });"
+      "document.all.OLED.value=oledon?'OFF':'ON '"
+    "}\n"
+    "function setavg(){"
+      "avg=!avg;"
+      "$.post(\"s\", { A: avg, key: document.all.myKey.value });"
+      "document.all.AVG.value=avg?'OFF':'ON '"
+    "}\n"
     "setInterval(timer,1000);"
     "t=";
     page += now() - ((ee.tz + dst) * 3600); // set to GMT
@@ -302,6 +326,7 @@ void handleRoot() // Main webpage interface
           "t+=1000;d=new Date(t);"
           "document.all.time.innerHTML=d.toLocaleTimeString()}"
     "</script>"
+
     "<body bgcolor=\"silver\" onload=\"{"
     "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
     "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;}\">"
@@ -312,29 +337,33 @@ void handleRoot() // Main webpage interface
             "<td align=\"center\" colspan=2><div id=\"time\">";
     page += timeFmt(true, true);
     page += "</div></td><td><div id=\"temp\"> ";
-    page += sDec(currentTemp) + "&degF</div> </td><td><div id=\"on\">";
+    page += sDec(currentTemp) + "&degF</div> </td><td align=\"center\"><div id=\"on\">";
     page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
     page += "</div></td></tr>"
     // Row 2
             "<tr>"
             "<td align=\"center\" colspan=2>Bedroom: </td><td><div id=\"rt\">";
     page += sDec(roomTemp);
-    page += "&degF</div></td><td><div id=\"rh\">";
+    page += "&degF</div></td><td align=\"left\"><div id=\"rh\">";
     page += sDec(rh);
     page += "%</div> </td></tr>"
     // Row 3
             "<tr>"
             "<td colspan=2>";
     page += valButton("TZ ", "Z", String(ee.tz) );
-    page += "</td><td colspan=2>";
-    page += button("OLED ", "OLED", bDisplay_on ? "OFF":"ON" );
-    page += "</td></tr>"
+    page += "</td><td colspan=2>Display:"
+            "<input type=\"button\" value=\"";
+    page += ee.bEnableOLED ? "OFF":"ON ";
+    page += "\" id=\"OLED\" onClick=\"{oled()}\">"
+          "</td></tr>"
     // Row 4
             "<tr><td colspan=2>";
     page += vacaForm();
-    page += "</td><td colspan=2>";
-    page += button("Avg ", "A", ee.bAvg ? "OFF":"ON" );
-    page += "</td></tr>"
+    page += "</td><td colspan=2>Average:"
+            "<input type=\"button\" value=\"";
+    page += ee.bAvg ? "OFF":"ON ";
+    page += "\" id=\"AVG\" onClick=\"{setavg()}\">"
+            "</td></tr>"
     // Row 5
             "<tr>"
             "<td colspan=2>";
@@ -351,13 +380,13 @@ void handleRoot() // Main webpage interface
     {
       page += "<tr><td colspan=4";
       if(i == schInd && !ee.bVaca)
-        page += " style=\"background-color:teal\""; // Highlight active schedule
+        page += " style=\"background-color:red\""; // Highlight active schedule
       page += ">";
       page += schedForm(i);
       page += "</td></tr>";
     }
     page += "<tr><td colspan=2><small>IP: ";
-    page += ipString(server.client().remoteIP());
+    page += server.client().remoteIP().toString();
     page += "</small></td><td colspan=2>"
             "<input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 90px\">"
             "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
@@ -476,7 +505,7 @@ void handleS() { // standard params, but no page
   parseParams();
 
   String page = "{\"ip\": \"";
-  page += ipString(WiFi.localIP());
+  page += WiFi.localIP().toString();
   page += ":";
   page += serverPort;
   page += "\"}";
@@ -689,8 +718,7 @@ void loop()
     }
     if(displayOnTimer)
     {
-      if(--displayOnTimer == 0)
-        bDisplay_on = false;
+      displayOnTimer --;
     }
     if(nWrongPass)
       nWrongPass--;
@@ -718,7 +746,7 @@ void DrawScreen()
     blnk = !blnk;
   }
 
-  if(bDisplay_on) // draw only ON indicator if screen off
+  if(ee.bEnableOLED || displayOnTimer) // draw only ON indicator if screen off
   {
     display.setFontScale2x2(false); // the small text
     display.drawString( 8, 22, "Temp");
@@ -905,9 +933,8 @@ void checkButtons()
       {
         changeTemp(1);
         lRepeatMillis = millis(); // initial increment
-        if(bDisplay_on == false)
+        if(ee.bEnableOLED == false)
           displayOnTimer = 30;
-        bDisplay_on = true;
       }
     }
     else if(bState[0] == LOW) // holding down
@@ -916,9 +943,8 @@ void checkButtons()
       {
         changeTemp(1);
         lRepeatMillis = millis();
-        if(bDisplay_on == false)
+        if(ee.bEnableOLED == false)
           displayOnTimer = 30;
-        bDisplay_on = true;
       }
     }
   }
