@@ -125,6 +125,7 @@ int loTemp;
 bool bHeater = false;
 uint8_t schInd = 0;
 String sMessage;
+uint8_t msgCnt;
 
 String dataJson()
 {
@@ -153,9 +154,12 @@ eventHandler event(dataJson);
 void parseParams()
 {
   static char temp[256];
-  String password;
+  char password[64];
   int val;
   int freq = 0;
+
+  if(server.args() == 0)
+    return;
 
   for ( uint8_t i = 0; i < server.args(); i++ ) // get password first
   {
@@ -165,14 +169,14 @@ void parseParams()
     switch( server.argName(i).charAt(0)  )
     {
       case 'k': // key
-          password = s;
+          s.toCharArray(password, sizeof(password));
           break;
     }
   }
 
   uint32_t ip = server.client().remoteIP();
 
-  if(server.args() && (password != controlPassword) )
+  if(strcmp(controlPassword, password))
   {
     if(nWrongPass == 0)
       nWrongPass = 10;
@@ -246,6 +250,8 @@ void parseParams()
           break;
       case 'm':  // message
           sMessage = server.arg(i);
+          sMessage += " ";
+          msgCnt = 4;
           if(ee.bEnableOLED == false)
           {
             displayOnTimer = 60;
@@ -732,7 +738,6 @@ const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep
 
 void DrawScreen()
 {
-  static int16_t ind;
   static bool blnk = false;
   static long last;
   static int8_t msgCnt = 0;
@@ -758,12 +763,9 @@ void DrawScreen()
   
     if(sMessage.length()) // message sent over wifi
     {
-      s = sMessage + " " + sMessage; // just double it
+      s = sMessage; // custom message
       if(msgCnt == 0) // starting
-      {
         msgCnt = 3; // times to repeat message
-        ind = 0;
-      }
     }
     else
     {
@@ -779,21 +781,9 @@ void DrawScreen()
       s += "]F "; // <- that's a degree symbol
       s += sDec(rh);
       s += "% ";
+    }
 
-      s = s + s;
-    }
-    int w = display.drawPropString(ind, 0, s ); // this returns the proportional text width
-    if( --ind < -(w))
-    {
-      if(msgCnt) // end of custom message display
-      {
-        if(--msgCnt == 0) // decrement times to repeat it
-        {
-            sMessage = "";
-        }
-      }
-      ind = 0;
-    }
+    Scroller(s);
 
     String temp = sDec(currentTemp) + "]"; // <- that's a degree symbol
     display.drawPropString(2, 33, temp );
@@ -807,6 +797,40 @@ void DrawScreen()
     if(blnk) display.drawString( 2, 56, ".");
   }
   display.display();
+}
+
+// Text scroller optimized for very long lines
+void Scroller(String s)
+{
+  static int16_t ind = 0;
+  static char last = 0;
+  static int16_t x = 0;
+
+  if(last != s.charAt(0)) // reset if content changed
+  {
+    x = 0;
+    ind = 0;
+  }
+  last = s.charAt(0);
+  int len = s.length(); // get length before overlap added
+  s += s.substring(0, 18); // add ~screen width overlap
+  int w = display.propCharWidth(s.charAt(ind)); // first char for measure
+  String sPart = s.substring(ind, ind + 18);
+  display.drawPropString(x, 0, sPart );
+
+  if( --x <= -(w))
+  {
+    x = 0;
+    if(++ind >= len) // reset at last char
+    {
+      ind = 0;
+      if(msgCnt) // end of custom message display
+      {
+        if(--msgCnt == 0) // decrement times to repeat it
+            sMessage = "";
+      }
+    }
+  }
 }
 
 // Check temp to turn heater on and off
