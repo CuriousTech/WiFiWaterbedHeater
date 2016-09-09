@@ -35,8 +35,9 @@ SOFTWARE.
 #include <Event.h>  // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/Event
 #include <DHT.h>  // http://www.github.com/markruys/arduino-DHT
 
-const char *controlPassword = "password"; // device password for modifying any settings
-int serverPort = 82;                    // port fwd for fwdip.php
+const char controlPassword[] = "password";    // device password for modifying any settings
+const int serverPort = 82;                    // port fwd for fwdip.php
+const int watts = 290;                        // standard waterbed heater wattage (300) or measured watts
 
 #define EXPAN1    0  // side expansion pad
 #define EXPAN2    2  // side expansion pad
@@ -95,6 +96,7 @@ struct eeSet // EEPROM backed data
   bool    bRes;
   char    schNames[MAX_SCHED][16]; // 128  names for small display
   Sched   schedule[MAX_SCHED];  // 48 bytes
+  uint32_t ppkwh, res;
 };
 
 eeSet ee = {
@@ -117,6 +119,7 @@ eeSet ee = {
     {830,  0*60, 3, 0},
     {830,  0*60, 3, 0}
   },
+  1457,0,
 };
 
 int currentTemp = 850;
@@ -126,6 +129,11 @@ bool bHeater = false;
 uint8_t schInd = 0;
 String sMessage;
 uint8_t msgCnt;
+float fTotalCost;
+float fLastTotalCost;
+
+const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
+const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
 String dataJson()
 {
@@ -208,6 +216,9 @@ void parseParams()
 
     switch( server.argName(i).charAt(0)  )
     {
+      case 'A': // Average
+           ee.bAvg = b;
+           break;
       case 'D': // D0
           ee.schedule[which].setTemp -= 1; // -0.1
           break;
@@ -242,9 +253,6 @@ void parseParams()
           else
             ee.vacaTemp = (uint16_t) (s.toFloat() * 10);
           break;
-      case 'A': // Average
-           ee.bAvg = b;
-           break;
       case 'N': // name
           s.toCharArray(ee.schNames[ which ], 15);
           break;
@@ -256,6 +264,9 @@ void parseParams()
           {
             displayOnTimer = 60;
           }
+          break;
+      case 'K':
+          ee.ppkwh = (uint32_t)(s.toFloat() * 10000);
           break;
       case 'f': // frequency
           freq = val;
@@ -296,47 +307,48 @@ void handleRoot() // Main webpage interface
     "body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}\n"
     "</style>\n"
 
-    "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>"
+    "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>"
     "<script type=\"text/javascript\">"
     "oledon=";
   page += ee.bEnableOLED;
-  page += ";avg=";
+  page += "\navg=";
   page += ee.bAvg;
-  page += ";function startEvents()"
+  page += "\nfunction startEvents()"
     "{"
-      "eventSource = new EventSource(\"events?i=60&p=1\");"
-      "eventSource.addEventListener('open', function(e){},false);"
-      "eventSource.addEventListener('error', function(e){},false);"
-      "eventSource.addEventListener('state',function(e){"
-        "d = JSON.parse(e.data);"
-        "document.all.temp.innerHTML=d.waterTemp+'&degF';"
-        "document.all.on.innerHTML=d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\";"
-        "document.all.rt.innerHTML= 'Bedroom: '+d.temp+'&degF';"
-        "document.all.rh.innerHTML=d.rh+'%';"
-      "},false)"
+      "eventSource = new EventSource(\"events?i=60&p=1\")\n"
+      "eventSource.addEventListener('open', function(e){},false)\n"
+      "eventSource.addEventListener('error', function(e){},false)\n"
+      "eventSource.addEventListener('state',function(e){\n"
+        "d = JSON.parse(e.data)\n"
+        "document.all.temp.innerHTML=d.waterTemp+'&degF'\n"
+//        "document.all.on.innerHTML=d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\"\n"
+        "document.all.on.innerHTML=\">\"+d.hiTemp+\"&degF \"+d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\"\n"
+        "document.all.rt.innerHTML= 'Bedroom: '+d.temp+'&degF'\n"
+        "document.all.rh.innerHTML=d.rh+'%'\n"
+      "},false)\n"
     "}\n"
     "function oled(){"
-      "oledon=!oledon;"
-      "$.post(\"s\", { O: oledon, key: document.all.myKey.value });"
+      "oledon=!oledon\n"
+      "$.post(\"s\", { O: oledon, key: document.all.myKey.value })\n"
       "document.all.OLED.value=oledon?'OFF':'ON '"
     "}\n"
     "function setavg(){"
-      "avg=!avg;"
-      "$.post(\"s\", { A: avg, key: document.all.myKey.value });"
+      "avg=!avg\n"
+      "$.post(\"s\", { A: avg, key: document.all.myKey.value })\n"
       "document.all.AVG.value=avg?'OFF':'ON '"
     "}\n"
-    "setInterval(timer,1000);"
+    "setInterval(timer,1000)\n"
     "t=";
     page += now() - ((ee.tz + dst) * 3600); // set to GMT
-    page +="000;function timer(){" // add 000 for ms
-          "t+=1000;d=new Date(t);"
-          "document.all.time.innerHTML=d.toLocaleTimeString()}"
-    "</script>"
+    page +="000\nfunction timer(){" // add 000 for ms
+          "t+=1000\nd=new Date(t)\n"
+          "document.all.time.innerHTML=d.toLocaleTimeString()}\n"
+    "</script>\n"
 
-    "<body bgcolor=\"silver\" onload=\"{"
-    "key = localStorage.getItem('key'); if(key!=null) document.getElementById('myKey').value = key;"
-    "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;}\">"
-    "<h3>WiFi Waterbed Heater</h3>"
+    "<body bgcolor=\"silver\" onload=\"{\n"
+    "key = localStorage.getItem('key')\n if(key!=null) document.getElementById('myKey').value = key\n"
+    "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;}\">\n"
+    "<h3>WiFi Waterbed Heater</h3>\n"
     "<table align=\"right\">";
     // Row 1
     page += "<tr>"
@@ -344,15 +356,18 @@ void handleRoot() // Main webpage interface
     page += timeFmt(true, true);
     page += "</div></td><td><div id=\"temp\"> ";
     page += sDec(currentTemp) + "&degF</div> </td><td align=\"center\"><div id=\"on\">";
+    page += ">";
+    page += sDec(hiTemp);
+    page += "&degF ";
     page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
-    page += "</div></td></tr>"
+    page += "</div></td></tr>\n"
     // Row 2
             "<tr>"
             "<td align=\"center\" colspan=2>Bedroom: </td><td><div id=\"rt\">";
     page += sDec(roomTemp);
     page += "&degF</div></td><td align=\"left\"><div id=\"rh\">";
     page += sDec(rh);
-    page += "%</div> </td></tr>"
+    page += "%</div> </td></tr>\n"
     // Row 3
             "<tr>"
             "<td colspan=2>";
@@ -361,7 +376,7 @@ void handleRoot() // Main webpage interface
             "<input type=\"button\" value=\"";
     page += ee.bEnableOLED ? "OFF":"ON ";
     page += "\" id=\"OLED\" onClick=\"{oled()}\">"
-          "</td></tr>"
+          "</td></tr>\n"
     // Row 4
             "<tr><td colspan=2>";
     page += vacaForm();
@@ -369,7 +384,7 @@ void handleRoot() // Main webpage interface
             "<input type=\"button\" value=\"";
     page += ee.bAvg ? "OFF":"ON ";
     page += "\" id=\"AVG\" onClick=\"{setavg()}\">"
-            "</td></tr>"
+            "</td></tr>\n"
     // Row 5
             "<tr>"
             "<td colspan=2>";
@@ -378,9 +393,9 @@ void handleRoot() // Main webpage interface
     page += "</td><td colspan=2>";
     page += button("Temp ", "U" + String( schInd ), "Up");
     page += button("Adjust ", "D" + String( schInd ), "Dn");
-    page += "</td></tr>"
+    page += "</td></tr>\n"
     // Row 5
-            "<tr><td align=\"left\">Name</td><td align=\"left\">Time</td><td align=\"left\">Temp</td><td width=\"99px\" align=\"left\">Threshold</td></tr>";
+            "<tr><td align=\"left\">Name</td><td align=\"left\">Time</td><td align=\"left\">Temp</td><td width=\"99px\" align=\"left\">Threshold</td></tr>\n";
     // Row 6-(7~13)
     for(int i = 0; i < ee.schedCnt; i++)
     {
@@ -389,15 +404,25 @@ void handleRoot() // Main webpage interface
         page += " style=\"background-color:red\""; // Highlight active schedule
       page += ">";
       page += schedForm(i);
-      page += "</td></tr>";
+      page += "</td></tr>\n";
     }
-    page += "<tr><td colspan=2><small>IP: ";
+    page += "<tr height=32><td>";
+    page += months[(month()+10)%12]; // last month
+    page += ": $";
+    page += String(fLastTotalCost, 2);
+    page += "</td><td>";
+    page += months[month()-1]; // this month
+    page += ":</td><td>$";
+    page += String(fTotalCost, 2);
+    page += "</td><td>";
+    page += valButton("$", "K", String((float)ee.ppkwh/10000,4) );
+    page += "</td></tr><tr><td colspan=2><small>IP: ";
     page += server.client().remoteIP().toString();
     page += "</small></td><td colspan=2>"
             "<input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 90px\">"
             "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
-            "</td></tr>"
-            "</table>"
+            "</td></tr>\n"
+            "</table>\n"
             "</body></html>";
     server.send ( 200, "text/html", page );
 
@@ -429,7 +454,7 @@ String valButton(String lbl, String id, String val)
   s += lbl;
   s += "<input name='";
   s += id;
-  s += "' type=text size=1 value='";
+  s += "' type=text size=2 value='";
   s += val;
   s += "'><input type=\"hidden\" name=\"key\"><input value=\"Set\" type=submit></form>";
   return s;
@@ -474,7 +499,7 @@ String schedForm(int sch)
 String vacaForm(void)
 {
   String s = "<form method='post'>";
-  s += "Vaca <input name='V0' type=text size=3 value='";
+  s += "Vaca<input name='V0' type=text size=3 value='";
   s += sDec(ee.vacaTemp);
   s += "F'>";
   s += "<input type=\"hidden\" name=\"key\"><input name='V1' value='";
@@ -683,7 +708,9 @@ void setup()
 
 void loop()
 {
-  static uint8_t hour_save, min_save, sec_save;
+  static uint8_t hour_save, min_save, sec_save, mon_save;
+  static bool bLastOn;
+  static uint32_t onCounter = 0;
 
   MDNS.update();
   server.handleClient();
@@ -720,6 +747,12 @@ void loop()
         {
           getUdpTime();
         }
+        if(mon_save != month())
+        {
+          mon_save = month();
+          fLastTotalCost = fTotalCost; // shift the cost at the end of the month
+          fTotalCost = 0;
+        }
       }
     }
     if(displayOnTimer)
@@ -728,13 +761,18 @@ void loop()
     }
     if(nWrongPass)
       nWrongPass--;
+    if(bHeater)
+      onCounter++;
+    if(bHeater != bLastOn || onCounter > (60*60*12)) // total up when it turns off or before 32 bit carry error
+    {                         // seconds * (price_per_KWH / 10000) / secs_per_hour * watts
+      if(bLastOn) fTotalCost += (float)(onCounter * watts * ee.ppkwh) / 36000000000;
+      bLastOn = bHeater;
+      onCounter = 0;
+    }
     event.heartbeat();
   }
   DrawScreen();
 }
-
-const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
-const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
 void DrawScreen()
 {
@@ -908,24 +946,22 @@ void checkTemp()
     newTemp += array[i];
   newTemp /= TEMPS;
 
-  if(newTemp != currentTemp)
+  static uint16_t oldHT;
+  if(newTemp != currentTemp || hiTemp != oldHT)
   {
     currentTemp = newTemp;
+    oldHT = hiTemp;
     event.pushInstant();
   }
-  Serial.print("Temp: ");
-  Serial.println(currentTemp);
 
   if(currentTemp <= loTemp && bHeater == false)
   {
-    Serial.println("Heat on");
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
     event.push(); // give a more precise account of changes
   }
   else if(currentTemp >= hiTemp && bHeater == true)
   {
-    Serial.println("Heat off");
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
     event.push();
