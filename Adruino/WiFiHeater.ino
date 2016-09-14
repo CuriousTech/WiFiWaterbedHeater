@@ -251,7 +251,7 @@ void parseParams()
           if(which)
             ee.bVaca = b;
           else
-            ee.vacaTemp = (uint16_t) (s.toFloat() * 10);
+            ee.vacaTemp = constrain( (uint16_t) (s.toFloat() * 10), 400, 800); // 40-80F
           break;
       case 'N': // name
           s.toCharArray(ee.schNames[ which ], 15);
@@ -320,11 +320,10 @@ void handleRoot() // Main webpage interface
       "eventSource.addEventListener('error', function(e){},false)\n"
       "eventSource.addEventListener('state',function(e){\n"
         "d = JSON.parse(e.data)\n"
-        "document.all.temp.innerHTML=d.waterTemp+'&degF'\n"
-//        "document.all.on.innerHTML=d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\"\n"
-        "document.all.on.innerHTML=\">\"+d.hiTemp+\"&degF \"+d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\"\n"
-        "document.all.rt.innerHTML= 'Bedroom: '+d.temp+'&degF'\n"
-        "document.all.rh.innerHTML=d.rh+'%'\n"
+        "document.all.temp.innerHTML=d.waterTemp.toFixed(1)+'&degF'\n"
+        "document.all.on.innerHTML=\">\"+d.hiTemp.toFixed(1)+\"&degF \"+(d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\")\n"
+        "document.all.rt.innerHTML=d.temp.toFixed(1)+'&degF'\n"
+        "document.all.rh.innerHTML=d.rh.toFixed(1)+'%'\n"
       "},false)\n"
     "}\n"
     "function oled(){"
@@ -347,7 +346,8 @@ void handleRoot() // Main webpage interface
 
     "<body bgcolor=\"silver\" onload=\"{\n"
     "key = localStorage.getItem('key')\n if(key!=null) document.getElementById('myKey').value = key\n"
-    "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;}\">\n"
+    "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;}\n"
+    "startEvents()\">\n"
     "<h3>WiFi Waterbed Heater</h3>\n"
     "<table align=\"right\">";
     // Row 1
@@ -764,8 +764,11 @@ void loop()
     if(bHeater)
       onCounter++;
     if(bHeater != bLastOn || onCounter > (60*60*12)) // total up when it turns off or before 32 bit carry error
-    {                         // seconds * (price_per_KWH / 10000) / secs_per_hour * watts
-      if(bLastOn) fTotalCost += (float)(onCounter * watts * ee.ppkwh) / 36000000000;
+    {
+      if(bLastOn)
+      {                       // seconds * (price_per_KWH / 10000) / secs_per_hour * watts
+        fTotalCost += (float)(onCounter * watts * ee.ppkwh) / 36000000000;
+      }
       bLastOn = bHeater;
       onCounter = 0;
     }
@@ -1229,6 +1232,7 @@ bool checkUdpTime()
   {
     if(++retry > 500)
      {
+        bNeedUpdate = false;
         getUdpTime();
         retry = 0;
      }
