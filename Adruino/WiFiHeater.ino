@@ -23,16 +23,13 @@ SOFTWARE.
 
 #include <Wire.h>
 #include <ssd1306_i2c.h> // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/ssd1306_i2c
-
-#include <WiFiClient.h>
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
-#include <ESP8266WebServer.h>
+#include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
 #include <OneWire.h>
 #include <WiFiUdp.h>
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
-#include <Event.h>  // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/Event
 #include <DHT.h>  // http://www.github.com/markruys/arduino-DHT
 
 const char controlPassword[] = "password";    // device password for modifying any settings
@@ -61,7 +58,9 @@ int displayOnTimer;
 DHT dht;
 
 WiFiManager wifi(0);  // AP page:  192.168.4.1
-ESP8266WebServer server( serverPort );
+AsyncWebServer server( serverPort );
+AsyncEventSource events("/events"); // event source (Server-Sent events)
+
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 WiFiUDP Udp;
@@ -129,60 +128,69 @@ bool bHeater = false;
 uint8_t schInd = 0;
 String sMessage;
 uint8_t msgCnt;
+uint32_t onCounter;
 float fTotalCost;
 float fLastTotalCost;
 
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
-String dataJson()
+float currCost()
 {
-    String s = "{\"waterTemp\": ";
-    s += sDec(currentTemp);
-    s += ",\"setTemp\": ";
-    s += sDec(ee.schedule[schInd].setTemp);
-    s += ", \"hiTemp\": ";
-    s += sDec(hiTemp);
-    s += ", \"loTemp\": ";
-    s += sDec(loTemp);
-    s += ", \"schInd\": ";
-    s += schInd;
-    s += ", \"on\": ";
-    s += bHeater;
-    s += ", \"temp\": ";
-    s += sDec(roomTemp);
-    s += ", \"rh\": ";
-    s += sDec(rh);
-    s += "}";
-    return s;
+  float fCurTotalCost = fTotalCost;
+  if(onCounter) fCurTotalCost += (float)(onCounter * watts * ee.ppkwh) / 36000000000; // add current cycle
+  return fCurTotalCost;
 }
 
-eventHandler event(dataJson);
+String dataJson()
+{
+  String s = "{\"waterTemp\": ";
+  s += sDec(currentTemp);
+  s += ",\"setTemp\": ";
+  s += sDec(ee.schedule[schInd].setTemp);
+  s += ", \"hiTemp\": ";
+  s += sDec(hiTemp);
+  s += ", \"loTemp\": ";
+  s += sDec(loTemp);
+  s += ", \"schInd\": ";
+  s += schInd;
+  s += ", \"on\": ";
+  s += bHeater;
+  s += ", \"temp\": ";
+  s += sDec(roomTemp);
+  s += ", \"rh\": ";
+  s += sDec(rh);
+  s += ", \"tc\": ";
+  s += String(currCost(), 2);
+  s += "}";
+  return s;
+}
 
-void parseParams()
+void parseParams(AsyncWebServerRequest *request)
 {
   static char temp[256];
   char password[64];
   int val;
   int freq = 0;
 
-  if(server.args() == 0)
+ if(request->params() == 0)
     return;
 
-  for ( uint8_t i = 0; i < server.args(); i++ ) // get password first
-  {
-    server.arg(i).toCharArray(temp, 256);
-    String s = wifi.urldecode(temp);
+  // get password first
+  for ( uint8_t i = 0; i < request->params(); i++ ) {
+    AsyncWebParameter* p = request->getParam(i);
 
-    switch( server.argName(i).charAt(0)  )
+    p->value().toCharArray(temp, 100);
+    String s = wifi.urldecode(temp);
+    switch( p->name().charAt(0)  )
     {
       case 'k': // key
-          s.toCharArray(password, sizeof(password));
-          break;
+        s.toCharArray(password, sizeof(password));
+        break;
     }
   }
 
-  uint32_t ip = server.client().remoteIP();
+  uint32_t ip = request->client()->localIP();
 
   if(strcmp(controlPassword, password))
   {
@@ -193,28 +201,28 @@ void parseParams()
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
     String data = "{\"ip\":\"";
-    data += server.client().remoteIP().toString();
+    data += request->client()->localIP().toString();
     data += "\",\"pass\":\"";
     data += password;
     data += "\"}";
-    event.push("hack", data); // log attempts
+    events.send(data.c_str(), "hack"); // log attempts
     lastIP = ip;
     return;
   }
 
   lastIP = ip;
 
-  for ( uint8_t i = 0; i < server.args(); i++ )
-  {
-    server.arg(i).toCharArray(temp, 256);
+  for ( uint8_t i = 0; i < request->params(); i++ ) {
+    AsyncWebParameter* p = request->getParam(i);
+    p->value().toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
-    Serial.println( i + " " + server.argName ( i ) + ": " + s);
-    int which = server.argName(i).charAt(1) - '0'; // limitation = 9
+
+    int which = p->name().charAt(1) - '0'; // limitation = 9
     if(which >= MAX_SCHED) which = MAX_SCHED - 1; // safety
     val = s.toInt();
     bool b = (s == "true" || s == "ON") ? true:false;
 
-    switch( server.argName(i).charAt(0)  )
+    switch( p->name().charAt(0)  )
     {
       case 'A': // Average
            ee.bAvg = b;
@@ -257,7 +265,7 @@ void parseParams()
           s.toCharArray(ee.schNames[ which ], 15);
           break;
       case 'm':  // message
-          sMessage = server.arg(i);
+          sMessage = s;
           sMessage += " ";
           msgCnt = 4;
           if(ee.bEnableOLED == false)
@@ -281,13 +289,23 @@ void parseParams()
   checkSched(true);   // reconfigure to new schedule
 }
 
-void handleRoot() // Main webpage interface
+void onBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+  //Handle body
+}
+
+void onUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+  //Handle upload
+}
+
+void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
 {
 //  digitalWrite(LED, HIGH);
 
   Serial.println("handleRoot");
 
-  parseParams();
+  parseParams(request);
+
+  AsyncResponseStream *response = request->beginResponseStream("text/html");
 
   String page;
   
@@ -320,10 +338,12 @@ void handleRoot() // Main webpage interface
       "eventSource.addEventListener('error', function(e){},false)\n"
       "eventSource.addEventListener('state',function(e){\n"
         "d = JSON.parse(e.data)\n"
+        "console.log(e.data)\n"
         "document.all.temp.innerHTML=d.waterTemp.toFixed(1)+'&degF'\n"
         "document.all.on.innerHTML=\">\"+d.hiTemp.toFixed(1)+\"&degF \"+(d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\")\n"
         "document.all.rt.innerHTML=d.temp.toFixed(1)+'&degF'\n"
         "document.all.rh.innerHTML=d.rh.toFixed(1)+'%'\n"
+        "document.all.tc.innerHTML='$'+d.tc.toFixed(2)\n"
       "},false)\n"
     "}\n"
     "function oled(){"
@@ -342,9 +362,10 @@ void handleRoot() // Main webpage interface
     page +="000\nfunction timer(){" // add 000 for ms
           "t+=1000\nd=new Date(t)\n"
           "document.all.time.innerHTML=d.toLocaleTimeString()}\n"
-    "</script>\n"
+    "</script>\n";
 
-    "<body bgcolor=\"silver\" onload=\"{\n"
+    response->print(page);
+    page = "<body bgcolor=\"silver\" onload=\"{\n"
     "key = localStorage.getItem('key')\n if(key!=null) document.getElementById('myKey').value = key\n"
     "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;}\n"
     "startEvents()\">\n"
@@ -379,7 +400,7 @@ void handleRoot() // Main webpage interface
           "</td></tr>\n"
     // Row 4
             "<tr><td colspan=2>";
-    page += vacaForm();
+//    page += vacaForm();
     page += "</td><td colspan=2>Average:"
             "<input type=\"button\" value=\"";
     page += ee.bAvg ? "OFF":"ON ";
@@ -397,6 +418,9 @@ void handleRoot() // Main webpage interface
     // Row 5
             "<tr><td align=\"left\">Name</td><td align=\"left\">Time</td><td align=\"left\">Temp</td><td width=\"99px\" align=\"left\">Threshold</td></tr>\n";
     // Row 6-(7~13)
+    response->print(page);
+
+    page = "";
     for(int i = 0; i < ee.schedCnt; i++)
     {
       page += "<tr><td colspan=4";
@@ -412,19 +436,20 @@ void handleRoot() // Main webpage interface
     page += String(fLastTotalCost, 2);
     page += "</td><td>";
     page += months[month()-1]; // this month
-    page += ":</td><td>$";
-    page += String(fTotalCost, 2);
-    page += "</td><td>";
+    page += ":</td><td><div id=\"tc\">$";
+    page += String(currCost(), 2);
+    page += "</div></td><td>";
     page += valButton("$", "K", String((float)ee.ppkwh/10000,4) );
-    page += "</td></tr><tr><td colspan=2><small>IP: ";
-    page += server.client().remoteIP().toString();
+    page += "</td></tr>\n<tr><td colspan=2><small>IP: ";
+    page += request->client()->localIP().toString();
     page += "</small></td><td colspan=2>"
             "<input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 90px\">"
             "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
             "</td></tr>\n"
             "</table>\n"
-            "</body></html>";
-    server.send ( 200, "text/html", page );
+            "</body>\n</html>";
+    response->print(page);
+    request->send ( response );
 
 //  digitalWrite(LED, LOW);
 }
@@ -500,7 +525,7 @@ String vacaForm(void)
 {
   String s = "<form method='post'>";
   s += "Vaca<input name='V0' type=text size=3 value='";
-  s += sDec(ee.vacaTemp);
+  s += String(ee.vacaTemp/10, 1);
   s += "F'>";
   s += "<input type=\"hidden\" name=\"key\"><input name='V1' value='";
   s += ee.bVaca ? "OFF":"ON";
@@ -531,20 +556,20 @@ String timeFmt(bool do_sec, bool do_M)
   return r;
 }
 
-void handleS() { // standard params, but no page
+void handleS(AsyncWebServerRequest *request) { // standard params, but no page
   Serial.println("handleS\n");
-  parseParams();
+  parseParams(request);
 
   String page = "{\"ip\": \"";
   page += WiFi.localIP().toString();
   page += ":";
   page += serverPort;
   page += "\"}";
-  server.send ( 200, "text/json", page );
+  request->send ( 200, "text/json", page );
 }
 
 // Return lots of vars as JSON
-void handleJson()
+void handleJson(AsyncWebServerRequest *request)
 {
   Serial.println("handleJson\n");
   String page = "{";
@@ -584,62 +609,17 @@ void handleJson()
   page += sDec(rh);
   page += "}";
 
-  server.send ( 200, "text/json", page );
+  request->send( 200, "text/json", page );
 }
 
-// event streamer (assume keep-alive)
-void handleEvents()
+void onRequest(AsyncWebServerRequest *request){
+  //Handle Unknown Request
+  request->send(404);
+}
+
+void onEvents(AsyncEventSourceClient *client)
 {
-  char temp[100];
-//  Serial.println("handleEvents");
-  uint16_t interval = 60; // default interval
-  uint8_t nType = 0;
-
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    server.arg(i).toCharArray(temp, 100);
-    String s = wifi.urldecode(temp);
-//    Serial.println( i + " " + server.argName ( i ) + ": " + s);
-    int val = s.toInt();
- 
-    switch( server.argName(i).charAt(0)  )
-    {
-      case 'i': // interval
-        interval = val;
-        break;
-      case 'p': // push
-        nType = 1;
-        break;
-      case 'c': // critical
-        nType = 2;
-        break;
-    }
-  }
-
-  String content = "HTTP/1.1 200 OK\r\n"
-      "Connection: keep-alive\r\n"
-      "Access-Control-Allow-Origin: *\r\n"
-      "Content-Type: text/event-stream\r\n\r\n";
-  server.sendContent(content);
-  event.set(server.client(), interval, nType); // copying the client before the send makes it work with SDK 2.2.0
-}
-
-void handleNotFound() {
-  Serial.println("handleNotFound\n");
-
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += ( server.method() == HTTP_GET ) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    message += " " + server.argName ( i ) + ": " + server.arg ( i ) + "\n";
-  }
-
-  server.send ( 404, "text/plain", message );
+  client->send(":ok", NULL, millis(), 1000);
 }
 
 void setup()
@@ -672,15 +652,20 @@ void setup()
     Serial.println ( "MDNS responder started" );
   }
 
-  server.on ( "/", handleRoot );
-  server.on ( "/s", handleS );
-  server.on ( "/json", handleJson );
-  server.on ( "/events", handleEvents );
-//  server.on ( "/inline", []() {
-//    server.send ( 200, "text/plain", "this works as well" );
-//  } );
-  server.onNotFound ( handleNotFound );
+  // attach AsyncEventSource
+  events.onConnect(onEvents);
+  server.addHandler(&events);
+
+  server.on ( "/", HTTP_GET | HTTP_POST, handleRoot );
+  server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
+  server.on ( "/json", HTTP_GET | HTTP_POST, handleJson );
+
+  server.onNotFound(onRequest);
+  server.onFileUpload(onUpload);
+  server.onRequestBody(onBody);
+
   server.begin();
+
   MDNS.addService("http", "tcp", serverPort);
 
   if( ds.search(ds_addr) )
@@ -710,10 +695,9 @@ void loop()
 {
   static uint8_t hour_save, min_save, sec_save, mon_save;
   static bool bLastOn;
-  static uint32_t onCounter = 0;
 
   MDNS.update();
-  server.handleClient();
+
   checkButtons();
 
   if(bNeedUpdate)
@@ -772,7 +756,6 @@ void loop()
       bLastOn = bHeater;
       onCounter = 0;
     }
-    event.heartbeat();
   }
   DrawScreen();
 }
@@ -919,7 +902,6 @@ void checkTemp()
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
     Serial.println("Invalid CRC");
-    event.print("Invalid CRC");
     return;
   }
 
@@ -954,20 +936,20 @@ void checkTemp()
   {
     currentTemp = newTemp;
     oldHT = hiTemp;
-    event.pushInstant();
+    events.send(dataJson().c_str(), "state");
   }
 
   if(currentTemp <= loTemp && bHeater == false)
   {
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
-    event.push(); // give a more precise account of changes
+    events.send(dataJson().c_str(), "state"); // give a more precise account of changes
   }
   else if(currentTemp >= hiTemp && bHeater == true)
   {
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
-    event.push();
+    events.send(dataJson().c_str(), "state");
   }
 }
 
