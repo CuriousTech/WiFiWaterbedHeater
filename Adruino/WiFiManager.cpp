@@ -13,27 +13,17 @@
 #include "ssd1306_i2c.h"
 #include "icons.h"
 #include <TimeLib.h>
+#include "eeMem.h"
+
+extern eeMem eemem;
 
 extern SSD1306 display;
 extern int httpPort;
 
-MDNSResponder mdns;
 WiFiServer server_s ( 80 );
 
-WiFiManager::WiFiManager(int eepromStart)
+WiFiManager::WiFiManager()
 {
-    _eepromStart = eepromStart;
-}
-
-void WiFiManager::begin() {
-    begin("NoNetESP");
-}
-
-void WiFiManager::begin(char const *apName) {
-    _apName = apName;
-
-    EEPROM.begin(512);
-    delay(10);
 }
 
 boolean WiFiManager::autoConnect() {
@@ -41,20 +31,19 @@ boolean WiFiManager::autoConnect() {
 }
 
 boolean WiFiManager::autoConnect(char const *apName) {
-    begin(apName);
+    _apName = apName;
+    _ssid = ee.szSSID;
+    _pass = ee.szSSIDPassword;
 
 //  DEBUG_PRINT("");
 //    DEBUG_PRINT("AutoConnect");
-    // read eeprom for ssid and pass
-    String ssid = getSSID();
-    String pass = getPassword();
     
-    if ( ssid.length() > 1 ) {
+    if ( _ssid.length() > 1 ) {
         display.print("Waiting for Wifi to connect");
         DEBUG_PRINT("Waiting for Wifi to connect");
 
         WiFi.mode(WIFI_STA);
-        WiFi.begin(ssid.c_str(), pass.c_str());
+        WiFi.begin(_ssid.c_str(), _pass.c_str());
         if ( hasConnected() ) {
             return true;
         }
@@ -62,72 +51,8 @@ boolean WiFiManager::autoConnect(char const *apName) {
     //setup AP
     beginConfigMode();
     //start portal and loop
-    startWebConfig(ssid);
+    startWebConfig(_ssid);
     return false;
-}
-
-String WiFiManager::getSSID() {
-    if(_ssid == "") {
-//        DEBUG_PRINT("Reading EEPROM SSID");
-        _ssid = getEEPROMString(0, 32);
-//        DEBUG_PRINT("SSID: ");
-//        DEBUG_PRINT(_ssid);
-    }
-    return _ssid;
-}
-
-String WiFiManager::getPassword() {
-    if(_pass == "") {
-//        DEBUG_PRINT("Reading EEPROM Password");
-        _pass = getEEPROMString(32, 64);
-//        DEBUG_PRINT("Password: ");
-//        DEBUG_PRINT(_pass);
-    }
-    return _pass;
-}
-
-String WiFiManager::getEEPROMString(int start, int len) {
-    String string = "";
-    for (int i = _eepromStart + start; i < _eepromStart + start + len; i++) {
-        //DEBUG_PRINT(i);
-        char c = char(EEPROM.read(i));
-        if(c == 0 ||c == 255) break; // fix for 2.0.0
-        string += c;
-    }
-    return string;
-}
-
-void WiFiManager::setEEPROMString(int start, int len, String string) {
-    int si = 0;
-    for (int i = _eepromStart + start; i < _eepromStart + start + len; i++) {
-        char c;
-        if(si < string.length()) {
-            c = string[si];
-//            DEBUG_PRINT("Wrote: ");
-//            DEBUG_PRINT(c);
-        } else {
-            c = 0;
-        }
-        EEPROM.write(i, c);
-        si++;
-    }
-}
-
-void WiFiManager::eeReadData(int addr, uint8_t *data, int size)
-{
-  for(int i = 0; i < size; i++, addr++)
-  {
-    data[i] = EEPROM.read( addr );
-  }
-}
-
-void WiFiManager::eeWriteData(int addr, uint8_t *data, int size)
-{
-  for(int i = 0; i < size; i++, addr++)
-  {
-    EEPROM.write(addr, data[i] );
-  }
-  EEPROM.commit();
 }
 
 boolean WiFiManager::hasConnected(void)
@@ -158,7 +83,7 @@ void WiFiManager::startWebConfig(String ssid) {
     DEBUG_PRINT("WiFi connected");
     DEBUG_PRINT(WiFi.localIP());
     DEBUG_PRINT(WiFi.softAPIP());
-    if (!mdns.begin(_apName)) {
+    if (!MDNS.begin(_apName)) {
         DEBUG_PRINT("Error setting up MDNS responder!");
         display.print("mDNS error");
         while(1) {
@@ -219,7 +144,7 @@ void WiFiManager::beginConfigMode(void) {
 int WiFiManager::serverLoop()
 {
     // Check for any mDNS queries and send responses
-    mdns.update();
+    MDNS.update();
     String s;
 
     WiFiClient client = server_s.available();
@@ -286,18 +211,13 @@ int WiFiManager::serverLoop()
         _timeout = false;
     }
     else if ( req.startsWith("/s") ) {
-        String qssid;
-        qssid = urldecode(req.substring(8,req.indexOf('&')).c_str());
-        DEBUG_PRINT(qssid);
-        DEBUG_PRINT("");
+        String s1 = urldecode(req.substring(8,req.indexOf('&')).c_str());
+        s1.toCharArray(ee.szSSID, sizeof(ee.szSSID) );
+        DEBUG_PRINT(ee.szSSID);
         req = req.substring( req.indexOf('&') + 1);
-        String qpass;
-        qpass = urldecode(req.substring(req.lastIndexOf('=')+1).c_str());
-
-        setEEPROMString(0, 32, qssid);
-        setEEPROMString(32, 64, qpass);
-
-        EEPROM.commit();
+        s1 = urldecode(req.substring(req.lastIndexOf('=')+1).c_str());
+        s1.toCharArray(ee.szSSIDPassword, sizeof(ee.szSSIDPassword) );
+        eemem.update();
 
         s = HTTP_200;
         String head = HTTP_HEAD;
@@ -363,17 +283,14 @@ String WiFiManager::urldecode(const char *src)
 boolean WiFiManager::findOpenAP(const char *szUrl)
 {
     int nOpen = 0;
-    begin("ESP8266");
+    _apName = "ESP8266";
+    _ssid = ee.szSSID;
+    _pass = ee.szSSIDPassword;
+
     int nScan = WiFi.scanNetworks();
     bool bFound = false;
     Serial.println("scan done");
-    String sSSID = getSSID();
     int ind = 0;
-
-    Serial.print("Cfg SSID: ");
-    Serial.print(sSSID);
-    Serial.print(" ");
-    Serial.println(sSSID.length());
 
     display.setFontScale2x2(false);
     if (nScan == 0) {
@@ -385,34 +302,33 @@ boolean WiFiManager::findOpenAP(const char *szUrl)
         {
             Serial.print(WiFi.SSID(i));
             Serial.print(" ");
+            Serial.println(WiFi.encryptionType(i));
+            display.print(WiFi.SSID(i));
 
             if(WiFi.encryptionType(i) == 7 /*&& strncmp(WiFi.SSID(i),"Chromecast",6) != 0*/)
             {
               display.drawString(128-8, 56, "O");
               nOpen++;
             }
-            else if( sSSID == WiFi.SSID(i) ){ // The saved AP was found
+            else if( _ssid == WiFi.SSID(i) ){ // The saved AP was found
               bFound  = true;
               display.drawString(128-8, 56, "<");
               Serial.print("(Cfg) ");
             }
-
-            Serial.println(WiFi.encryptionType(i));
-            display.print(WiFi.SSID(i));
         }
   }
 
   if(nOpen == 0 && !bFound)
   {
     display.print("No open AP found");
-    if(sSSID == "")
+    if(_ssid.length() == 0)
     {
        display.print("Switch to SoftAP");
        display.print("Hotspot: ESP8266");
        display.print("Goto 192.168.4.1");
     }else{
        display.print("Switching to");
-       display.print(sSSID);
+       display.print(_ssid);
     }
   }
 
