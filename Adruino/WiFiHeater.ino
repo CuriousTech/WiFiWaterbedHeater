@@ -31,6 +31,8 @@ SOFTWARE.
 #include <WiFiUdp.h>
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
 #include <DHT.h>  // http://www.github.com/markruys/arduino-DHT
+#include "eeMem.h"
+#include "RunningMedian.h"
 
 const char controlPassword[] = "password";    // device password for modifying any settings
 const int serverPort = 82;                    // port fwd for fwdip.php
@@ -55,9 +57,10 @@ int nWrongPass;
 SSD1306 display(0x3C, SDA, SCL); // Initialize the oled display for address 0x3C, SDA=4, SCL=5 (is the OLED mislabelled?)
 int displayOnTimer;
 
+eeMem eemem;
 DHT dht;
 
-WiFiManager wifi(0);  // AP page:  192.168.4.1
+WiFiManager wifi;  // AP page:  192.168.4.1
 AsyncWebServer server( serverPort );
 AsyncEventSource events("/events"); // event source (Server-Sent events)
 
@@ -71,55 +74,6 @@ uint16_t roomTemp;
 uint16_t rh;
 
 int httpPort = 80; // may be modified by open AP scan
-
-struct Sched
-{
-  uint16_t setTemp;
-  uint16_t timeSch;
-  uint8_t thresh;
-  uint8_t wday;  // Todo: weekday 0=any, 1-7 = day of week
-};
-
-#define MAX_SCHED 8
-
-struct eeSet // EEPROM backed data
-{
-  uint16_t size;          // if size changes, use defauls
-  uint16_t sum;           // if sum is diiferent from memory struct, write
-  uint16_t vacaTemp;       // vacation temp
-  int8_t  tz;            // Timezone offset from your global server
-  uint8_t schedCnt;    // number of active scedules
-  bool    bVaca;         // vacation enabled
-  bool    bAvg;         // average target between schedules
-  bool    bEnableOLED;
-  bool    bRes;
-  char    schNames[MAX_SCHED][16]; // 128  names for small display
-  Sched   schedule[MAX_SCHED];  // 48 bytes
-  uint32_t ppkwh, res;
-};
-
-eeSet ee = {
-  sizeof(eeSet),
-  0xAAAA,
-  650, -5, // vacaTemp, TZ
-  4,
-  false,                   // active schedules, vacation mode
-  false,                   // average
-  true,                   // OLED
-  false,                   // res
-  {"Morning", "Noon", "Day", "Night", "Sch5", "Sch6", "Sch7", "Sch8"},
-  {
-    {830,  7*60, 5, 0},  // temp, time, thresh, wday
-    {810, 11*60, 3, 0},
-    {810, 17*60, 3, 0},
-    {835, 20*60, 3, 0},
-    {830,  0*60, 3, 0},
-    {830,  0*60, 3, 0},
-    {830,  0*60, 3, 0},
-    {830,  0*60, 3, 0}
-  },
-  1457,0,
-};
 
 int currentTemp = 850;
 int hiTemp; // current target
@@ -144,7 +98,10 @@ float currCost()
 
 String dataJson()
 {
-  String s = "{\"waterTemp\": ";
+  String s = "{";
+  s += "\"t\": ";
+  s += now() - ((ee.tz + dst) * 3600);
+  s += ",\"waterTemp\": ";
   s += sDec(currentTemp);
   s += ",\"setTemp\": ";
   s += sDec(ee.schedule[schInd].setTemp);
@@ -179,7 +136,6 @@ void parseParams(AsyncWebServerRequest *request)
   // get password first
   for ( uint8_t i = 0; i < request->params(); i++ ) {
     AsyncWebParameter* p = request->getParam(i);
-
     p->value().toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
     switch( p->name().charAt(0)  )
@@ -190,7 +146,7 @@ void parseParams(AsyncWebServerRequest *request)
     }
   }
 
-  uint32_t ip = request->client()->localIP();
+  uint32_t ip = request->client()->remoteIP();
 
   if(strcmp(controlPassword, password))
   {
@@ -201,7 +157,7 @@ void parseParams(AsyncWebServerRequest *request)
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
     String data = "{\"ip\":\"";
-    data += request->client()->localIP().toString();
+    data += request->client()->remoteIP().toString();
     data += "\",\"pass\":\"";
     data += password;
     data += "\"}";
@@ -327,6 +283,7 @@ void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
 
     "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>"
     "<script type=\"text/javascript\">"
+    "a=document.all;"
     "oledon=";
   page += ee.bEnableOLED;
   page += "\navg=";
@@ -338,30 +295,25 @@ void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
       "eventSource.addEventListener('error', function(e){},false)\n"
       "eventSource.addEventListener('state',function(e){\n"
         "d = JSON.parse(e.data)\n"
-        "console.log(e.data)\n"
-        "document.all.temp.innerHTML=d.waterTemp.toFixed(1)+'&degF'\n"
-        "document.all.on.innerHTML=\">\"+d.hiTemp.toFixed(1)+\"&degF \"+(d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\")\n"
-        "document.all.rt.innerHTML=d.temp.toFixed(1)+'&degF'\n"
-        "document.all.rh.innerHTML=d.rh.toFixed(1)+'%'\n"
-        "document.all.tc.innerHTML='$'+d.tc.toFixed(2)\n"
+        "dt=new Date(d.t*1000)\n"
+        "a.time.innerHTML = dt.toLocaleTimeString()\n"
+        "a.temp.innerHTML=d.waterTemp.toFixed(1)+'&degF'\n"
+        "a.on.innerHTML=\">\"+d.hiTemp.toFixed(1)+\"&degF \"+(d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\")\n"
+        "a.rt.innerHTML=d.temp.toFixed(1)+'&degF'\n"
+        "a.rh.innerHTML=d.rh.toFixed(1)+'%'\n"
+        "a.tc.innerHTML='$'+d.tc.toFixed(2)\n"
       "},false)\n"
     "}\n"
     "function oled(){"
       "oledon=!oledon\n"
-      "$.post(\"s\", { O: oledon, key: document.all.myKey.value })\n"
-      "document.all.OLED.value=oledon?'OFF':'ON '"
+      "$.post(\"s\", { O: oledon, key: a.myKey.value })\n"
+      "a.OLED.value=oledon?'OFF':'ON '"
     "}\n"
     "function setavg(){"
       "avg=!avg\n"
-      "$.post(\"s\", { A: avg, key: document.all.myKey.value })\n"
-      "document.all.AVG.value=avg?'OFF':'ON '"
+      "$.post(\"s\", { A: avg, key: a.myKey.value })\n"
+      "a.AVG.value=avg?'OFF':'ON '"
     "}\n"
-    "setInterval(timer,1000)\n"
-    "t=";
-    page += now() - ((ee.tz + dst) * 3600); // set to GMT
-    page +="000\nfunction timer(){" // add 000 for ms
-          "t+=1000\nd=new Date(t)\n"
-          "document.all.time.innerHTML=d.toLocaleTimeString()}\n"
     "</script>\n";
 
     response->print(page);
@@ -441,7 +393,7 @@ void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
     page += "</div></td><td>";
     page += valButton("$", "K", String((float)ee.ppkwh/10000,4) );
     page += "</td></tr>\n<tr><td colspan=2><small>IP: ";
-    page += request->client()->localIP().toString();
+    page += request->client()->remoteIP().toString();
     page += "</small></td><td colspan=2>"
             "<input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 90px\">"
             "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
@@ -619,7 +571,8 @@ void onRequest(AsyncWebServerRequest *request){
 
 void onEvents(AsyncEventSourceClient *client)
 {
-  client->send(":ok", NULL, millis(), 1000);
+//  client->send(":ok", NULL, millis(), 1000);
+  events.send(dataJson().c_str(), "state");
 }
 
 void setup()
@@ -641,15 +594,14 @@ void setup()
 
   WiFi.hostname("waterbed");
   wifi.autoConnect("Waterbed"); // Tries all open APs, then starts softAP mode for config
-  eeRead(); // don't access EE before WiFi init
 
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
-  if ( MDNS.begin ( "waterbed", WiFi.localIP() ) ) {
-    Serial.println ( "MDNS responder started" );
+  if ( !MDNS.begin ( "waterbed", WiFi.localIP() ) ) {
+    Serial.println ( "MDNS responder failed" );
   }
 
   // attach AsyncEventSource
@@ -693,6 +645,8 @@ void setup()
 
 void loop()
 {
+  static RunningMedian<uint16_t,12> tempMedian;
+  static RunningMedian<uint16_t,12> rhMedian;
   static uint8_t hour_save, min_save, sec_save, mon_save;
   static bool bLastOn;
 
@@ -709,16 +663,18 @@ void loop()
     sec_save = second();
 
     checkTemp();
-    static uint8_t dht_cnt = 10;
+    static uint8_t dht_cnt = 5;
     if(--dht_cnt == 0)
     {
       dht_cnt = 10;
-      float r = dht.getHumidity();
+      rhMedian.add((uint16_t)(dht.getHumidity()*10));
       if(dht.getStatus() == DHT::ERROR_NONE)
       {
-         rh = r * 10;
-         roomTemp = dht.toFahrenheit(dht.getTemperature()) * 10;
+        rhMedian.getMedian(rh);
+        tempMedian.add((uint16_t)(dht.toFahrenheit(dht.getTemperature()) * 10));
+        tempMedian.getMedian(roomTemp);
       }
+      events.send(dataJson().c_str(), "state"); // update every 10 seconds
     }
     if(min_save != minute()) // only do stuff once per minute
     {
@@ -726,7 +682,7 @@ void loop()
       checkSched(false);        // check every minute for next schedule
       if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
       {
-        eeWrite(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
+        eemem.update(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
         if( (hour_save = hour()) == 2)
         {
           getUdpTime();
@@ -860,10 +816,7 @@ void Scroller(String s)
 // Check temp to turn heater on and off
 void checkTemp()
 {
-#define TEMPS 16
-  static uint16_t array[TEMPS];
-  static bool bInit = false;
-  static uint8_t idx = 0;
+  static RunningMedian<uint16_t,16> tempMedian;
   static uint8_t state = 0;
 
   switch(state)
@@ -913,23 +866,11 @@ void checkTemp()
     return;
   }
 
-//array[idx] = (( raw * 625) / 1000;  // to 10x celcius
-  array[idx] = (raw * 1125) / 1000 + 320; // 10x fahrenheit
+// tempMedian.add(( raw * 625) / 1000 );  // to 10x celcius
+  tempMedian.add( (raw * 1125) / 1000 + 320) ; // 10x fahrenheit
 
-  if(!bInit) // fill it the first time
-  {
-    for(int i = 0; i < TEMPS; i++)
-      array[i] = array[idx];
-    bInit = true;
-  }
-
-  if(++idx >= TEMPS) idx = 0;
-
-  uint16_t newTemp = 0;
-
-  for(int i = 0; i < TEMPS; i++)
-    newTemp += array[i];
-  newTemp /= TEMPS;
+  uint16_t newTemp;
+  tempMedian.getMedian(newTemp);
 
   static uint16_t oldHT;
   if(newTemp != currentTemp || hiTemp != oldHT)
@@ -1131,44 +1072,6 @@ void DST() // 2016 starts 2AM Mar 13, ends Nov 6
    dst = 0;
 }
 
-void eeWrite() // write the settings if changed
-{
-  uint16_t old_sum = ee.sum;
-  ee.sum = 0;
-  ee.sum = Fletcher16((uint8_t *)&ee, sizeof(eeSet));
-
-  if(old_sum == ee.sum)
-    return; // Nothing has changed?
-
-  wifi.eeWriteData(64, (uint8_t*)&ee, sizeof(ee)); // WiFiManager already has an instance open, so use that at offset 64+
-}
-
-void eeRead()
-{
-  eeSet eeTest;
-
-  wifi.eeReadData(64, (uint8_t*)&eeTest, sizeof(eeSet));
-  if(eeTest.size != sizeof(eeSet)) return; // revert to defaults if struct size changes
-  uint16_t sum = eeTest.sum;
-  eeTest.sum = 0;
-  eeTest.sum = Fletcher16((uint8_t *)&eeTest, sizeof(eeSet));
-  if(eeTest.sum != sum) return; // revert to defaults if sum fails
-  memcpy(&ee, &eeTest, sizeof(eeSet));
-}
-
-uint16_t Fletcher16( uint8_t* data, int count)
-{
-   uint16_t sum1 = 0;
-   uint16_t sum2 = 0;
-
-   for( int index = 0; index < count; ++index )
-   {
-      sum1 = (sum1 + data[index]) % 255;
-      sum2 = (sum2 + sum1) % 255;
-   }
-
-   return (sum2 << 8) | sum1;
-}
 
 void Tone(uint8_t _pin, unsigned int frequency, unsigned long duration)
 {
