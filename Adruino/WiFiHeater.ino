@@ -33,6 +33,8 @@ SOFTWARE.
 #include <DHT.h>  // http://www.github.com/markruys/arduino-DHT
 #include "eeMem.h"
 #include "RunningMedian.h"
+#include "pages.h"
+#include <JsonClient.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonClient
 
 const char controlPassword[] = "password";    // device password for modifying any settings
 const int serverPort = 82;                    // port fwd for fwdip.php
@@ -63,6 +65,7 @@ DHT dht;
 WiFiManager wifi;  // AP page:  192.168.4.1
 AsyncWebServer server( serverPort );
 AsyncEventSource events("/events"); // event source (Server-Sent events)
+AsyncWebSocket ws("/ws"); // access at ws://[esp ip]/ws
 
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
@@ -85,6 +88,9 @@ uint8_t msgCnt;
 uint32_t onCounter;
 float fTotalCost;
 float fLastTotalCost;
+
+void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+JsonClient jsonParse(jsonCallback);
 
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
@@ -109,8 +115,6 @@ String dataJson()
   s += sDec(hiTemp);
   s += ", \"loTemp\": ";
   s += sDec(loTemp);
-  s += ", \"schInd\": ";
-  s += schInd;
   s += ", \"on\": ";
   s += bHeater;
   s += ", \"temp\": ";
@@ -120,6 +124,60 @@ String dataJson()
   s += ", \"tc\": ";
   s += String(currCost(), 2);
   s += "}";
+  return s;
+}
+
+String setJson() // settings
+{
+  String s = "{";
+  for(int i = 0; i < 8; i++)
+  {
+    s += "\"N";
+    s += i;
+    s += "\":\"";
+    s += ee.schNames[i];
+    s += "\",\"S";
+    s += i;
+    s += "\":\"";
+    int h = ee.schedule[i].timeSch / 60;
+    int m = ee.schedule[i].timeSch % 60;
+    s += h;
+    s += ":";
+    if(m<10) s += "0";
+    s += m;
+    s += "\",\"T";
+    s += i;
+    s += "\":";
+    s += sDec(ee.schedule[i].setTemp);
+    s += ",\"H";
+    s += i;
+    s += "\":";
+    s += sDec(ee.schedule[i].thresh);
+    s += ",";
+  }
+  s += "\"vt\":";
+  s += sDec(ee.vacaTemp);
+  s += ",\"o\":";
+  s += ee.bEnableOLED;
+  s += ",\"tz\":";
+  s += ee.tz;
+  s += ",\"avg\":";
+  s += ee.bAvg;
+  s += ",\"ppkwh\":";
+  s += ee.ppkwh;
+  s += ",\"vo\":";
+  s += ee.bVaca;
+  s += ",\"idx\":";
+  s += schInd;
+  s += ",\"cnt\":";
+  s += ee.schedCnt;
+  s += ",\"tc2\":\"";
+  s += months[(month()+10)%12]; // last month
+  s += ": $";
+  s += String(fLastTotalCost, 2);
+  s += "\",\"m\":\"";
+  s += months[month()]; // this month
+  s += "\"}";
   return s;
 }
 
@@ -176,50 +234,10 @@ void parseParams(AsyncWebServerRequest *request)
     int which = p->name().charAt(1) - '0'; // limitation = 9
     if(which >= MAX_SCHED) which = MAX_SCHED - 1; // safety
     val = s.toInt();
-    bool b = (s == "true" || s == "ON") ? true:false;
+    bool b = (s == "true") ? true:false;
 
     switch( p->name().charAt(0)  )
     {
-      case 'A': // Average
-           ee.bAvg = b;
-           break;
-      case 'D': // D0
-          ee.schedule[which].setTemp -= 1; // -0.1
-          break;
-      case 'U': // U0
-          ee.schedule[which].setTemp += 1;
-          break;
-      case 'C': // C
-          ee.schedCnt = val;
-          if(ee.schedCnt > MAX_SCHED) ee.schedCnt = MAX_SCHED;
-          break;
-      case 'T': // T0 direct set (?TD=95.0&key=password)
-          ee.schedule[which].setTemp = (uint16_t) (s.toFloat() * 10);
-          break;
-      case 'H': // H0 Threshold
-          ee.schedule[which].thresh = (uint16_t) (s.toFloat() * 10);
-          break;
-      case 'Z': // TZ
-          ee.tz = val;
-          getUdpTime();
-          break;
-      case 'S': // S0-7
-          if(s.indexOf(':') >= 0) // if :, otherwise raw minutes
-            val = (val * 60) + s.substring(s.indexOf(':')+1).toInt();
-          ee.schedule[which].timeSch = val;
-          break;
-      case 'O': // OLED
-          ee.bEnableOLED = b;
-          break;
-      case 'V':     // vacation V0/V1
-          if(which)
-            ee.bVaca = b;
-          else
-            ee.vacaTemp = constrain( (uint16_t) (s.toFloat() * 10), 400, 800); // 40-80F
-          break;
-      case 'N': // name
-          s.toCharArray(ee.schNames[ which ], 15);
-          break;
       case 'm':  // message
           sMessage = s;
           sMessage += " ";
@@ -229,9 +247,6 @@ void parseParams(AsyncWebServerRequest *request)
             displayOnTimer = 60;
           }
           break;
-      case 'K':
-          ee.ppkwh = (uint32_t)(s.toFloat() * 10000);
-          break;
       case 'f': // frequency
           freq = val;
           break;
@@ -240,9 +255,6 @@ void parseParams(AsyncWebServerRequest *request)
           break;
     }
   }
-
-  checkLimits();      // constrain and check new values
-  checkSched(true);   // reconfigure to new schedule
 }
 
 void onBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
@@ -256,232 +268,18 @@ void onUpload(AsyncWebServerRequest *request, String filename, size_t index, uin
 void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
 {
 //  digitalWrite(LED, HIGH);
-
   Serial.println("handleRoot");
 
   parseParams(request);
 
-  AsyncResponseStream *response = request->beginResponseStream("text/html");
-
-  String page;
-  
-  page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
-    "<title>WiFi Waterbed Heater</title>\n"
-    "<style type=\"text/css\">\n"
-    "table,input{\n"
-    "border-radius: 5px;\n"
-    "box-shadow: 2px 2px 12px #000000;\n"
-    "background-image: -moz-linear-gradient(top, #dfffff, #5050ff);\n"
-    "background-image: -ms-linear-gradient(top, #dfffff, #5050ff);\n"
-    "background-image: -o-linear-gradient(top, #dfffff, #5050ff);\n"
-    "background-image: -webkit-linear-gradient(top, #dfffff, #5050ff);\n"
-    "background-image: linear-gradient(top, #dfffff, #5050ff);\n"
-    "background-clip: padding-box;\n"
-    "}\n"
-    "body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}\n"
-    "</style>\n"
-
-    "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>"
-    "<script type=\"text/javascript\">"
-    "a=document.all;"
-    "oledon=";
-  page += ee.bEnableOLED;
-  page += "\navg=";
-  page += ee.bAvg;
-  page += "\nfunction startEvents()"
-    "{"
-      "eventSource = new EventSource(\"events?i=60&p=1\")\n"
-      "eventSource.addEventListener('open', function(e){},false)\n"
-      "eventSource.addEventListener('error', function(e){},false)\n"
-      "eventSource.addEventListener('state',function(e){\n"
-        "d = JSON.parse(e.data)\n"
-        "dt=new Date(d.t*1000)\n"
-        "a.time.innerHTML = dt.toLocaleTimeString()\n"
-        "a.temp.innerHTML=d.waterTemp.toFixed(1)+'&degF'\n"
-        "a.on.innerHTML=\">\"+d.hiTemp.toFixed(1)+\"&degF \"+(d.on?\"<font color='red'><b>ON</b></font>\":\"OFF\")\n"
-        "a.rt.innerHTML=d.temp.toFixed(1)+'&degF'\n"
-        "a.rh.innerHTML=d.rh.toFixed(1)+'%'\n"
-        "a.tc.innerHTML='$'+d.tc.toFixed(2)\n"
-      "},false)\n"
-    "}\n"
-    "function oled(){"
-      "oledon=!oledon\n"
-      "$.post(\"s\", { O: oledon, key: a.myKey.value })\n"
-      "a.OLED.value=oledon?'OFF':'ON '"
-    "}\n"
-    "function setavg(){"
-      "avg=!avg\n"
-      "$.post(\"s\", { A: avg, key: a.myKey.value })\n"
-      "a.AVG.value=avg?'OFF':'ON '"
-    "}\n"
-    "</script>\n";
-
-    response->print(page);
-    page = "<body bgcolor=\"silver\" onload=\"{\n"
-    "key = localStorage.getItem('key')\n if(key!=null) document.getElementById('myKey').value = key\n"
-    "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value = key;}\n"
-    "startEvents()\">\n"
-    "<h3>WiFi Waterbed Heater</h3>\n"
-    "<table align=\"right\">";
-    // Row 1
-    page += "<tr>"
-            "<td align=\"center\" colspan=2><div id=\"time\">";
-    page += timeFmt(true, true);
-    page += "</div></td><td><div id=\"temp\"> ";
-    page += sDec(currentTemp) + "&degF</div> </td><td align=\"center\"><div id=\"on\">";
-    page += ">";
-    page += sDec(hiTemp);
-    page += "&degF ";
-    page += bHeater ? "<font color=\"red\"><b>ON</b></font>" : "OFF";
-    page += "</div></td></tr>\n"
-    // Row 2
-            "<tr>"
-            "<td align=\"center\" colspan=2>Bedroom: </td><td><div id=\"rt\">";
-    page += sDec(roomTemp);
-    page += "&degF</div></td><td align=\"left\"><div id=\"rh\">";
-    page += sDec(rh);
-    page += "%</div> </td></tr>\n"
-    // Row 3
-            "<tr>"
-            "<td colspan=2>";
-    page += valButton("TZ ", "Z", String(ee.tz) );
-    page += "</td><td colspan=2>Display:"
-            "<input type=\"button\" value=\"";
-    page += ee.bEnableOLED ? "OFF":"ON ";
-    page += "\" id=\"OLED\" onClick=\"{oled()}\">"
-          "</td></tr>\n"
-    // Row 4
-            "<tr><td colspan=2>";
-//    page += vacaForm();
-    page += "</td><td colspan=2>Average:"
-            "<input type=\"button\" value=\"";
-    page += ee.bAvg ? "OFF":"ON ";
-    page += "\" id=\"AVG\" onClick=\"{setavg()}\">"
-            "</td></tr>\n"
-    // Row 5
-            "<tr>"
-            "<td colspan=2>";
-    page += button("Schedule ", "C", String((ee.schedCnt < MAX_SCHED) ? (ee.schedCnt+1):ee.schedCnt) );
-    page += button("Count ", "C", String((ee.schedCnt > 0) ? (ee.schedCnt-1):ee.schedCnt) );
-    page += "</td><td colspan=2>";
-    page += button("Temp ", "U" + String( schInd ), "Up");
-    page += button("Adjust ", "D" + String( schInd ), "Dn");
-    page += "</td></tr>\n"
-    // Row 5
-            "<tr><td align=\"left\">Name</td><td align=\"left\">Time</td><td align=\"left\">Temp</td><td width=\"99px\" align=\"left\">Threshold</td></tr>\n";
-    // Row 6-(7~13)
-    response->print(page);
-
-    page = "";
-    for(int i = 0; i < ee.schedCnt; i++)
-    {
-      page += "<tr><td colspan=4";
-      if(i == schInd && !ee.bVaca)
-        page += " style=\"background-color:red\""; // Highlight active schedule
-      page += ">";
-      page += schedForm(i);
-      page += "</td></tr>\n";
-    }
-    page += "<tr height=32><td>";
-    page += months[(month()+10)%12]; // last month
-    page += ": $";
-    page += String(fLastTotalCost, 2);
-    page += "</td><td>";
-    page += months[month()-1]; // this month
-    page += ":</td><td><div id=\"tc\">$";
-    page += String(currCost(), 2);
-    page += "</div></td><td>";
-    page += valButton("$", "K", String((float)ee.ppkwh/10000,4) );
-    page += "</td></tr>\n<tr><td colspan=2><small>IP: ";
-    page += request->client()->remoteIP().toString();
-    page += "</small></td><td colspan=2>"
-            "<input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 90px\">"
-            "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
-            "</td></tr>\n"
-            "</table>\n"
-            "</body>\n</html>";
-    response->print(page);
-    request->send ( response );
-
+  request->send_P( 200, "text/html", page1 );
 //  digitalWrite(LED, LOW);
-}
-
-String button(String lbl, String id, String text) // Up/down buttons
-{
-  String s = "<form method='post'>";
-  s += lbl;
-  s += "<input name='";
-  s += id;
-  s += "' type='submit' value='";
-  s += text;
-  s += "'><input type=\"hidden\" name=\"key\" value=\"value\"></form>";
-  return s;
 }
 
 String sDec(int t) // just 123 to 12.3 string
 {
   String s = String( t / 10 ) + ".";
   s += t % 10;
-  return s;
-}
-
-String valButton(String lbl, String id, String val)
-{
-  String s = "<form method='post'>";
-  s += lbl;
-  s += "<input name='";
-  s += id;
-  s += "' type=text size=2 value='";
-  s += val;
-  s += "'><input type=\"hidden\" name=\"key\"><input value=\"Set\" type=submit></form>";
-  return s;
-}
-
-String schedForm(int sch)
-{
-  String s = "<form method='post'>";
-
-  s += "<input name='N"; // name
-  s += sch;
-  s += "' type=text size=5 value='";
-  s += ee.schNames[sch];
-  s += "'> ";
-
-  s += " <input name='S"; // time
-  s += sch;
-  s += "' type=text size=3 value='";
-  int t = ee.schedule[sch].timeSch;
-  s += ( t/60 );
-  s += ":";
-  if((t%60) < 10) s += "0";
-  s += t%60;
-  s += "'> ";
-
-  s += "<input name='T"; // temp
-  s += sch;
-  s += "' type=text size=3 value='";
-  s += sDec(ee.schedule[sch].setTemp);
-  s += "F'> ";
-
-  s += "<input name='H"; // thresh
-  s += sch;
-  s += "' type=text size=2 value='";
-  s += sDec(ee.schedule[sch].thresh);
-  s += "F'> ";
-  
-  s += "<input type=\"hidden\" name=\"key\"><input value=\"Set\" type=submit> </form>";
-  return s;
-}
-
-String vacaForm(void)
-{
-  String s = "<form method='post'>";
-  s += "Vaca<input name='V0' type=text size=3 value='";
-  s += String(ee.vacaTemp/10, 1);
-  s += "F'>";
-  s += "<input type=\"hidden\" name=\"key\"><input name='V1' value='";
-  s += ee.bVaca ? "OFF":"ON";
-  s += "' type=submit></form>";
   return s;
 }
 
@@ -575,6 +373,152 @@ void onEvents(AsyncEventSourceClient *client)
   events.send(dataJson().c_str(), "state");
 }
 
+const char *jsonListCmd[] = { "cmd",
+  "key",
+  "oled",
+  "TZ", // location
+  "avg",
+  "cnt",
+  "tadj",
+  "ppkwh",
+  "vaca",
+  "vacatemp",
+  "N0",  "N1",  "N2",  "N3",  "N4",  "N5",  "N6",  "N7",
+  "S0",  "S1",  "S2",  "S3",  "S4",  "S5",  "S6",  "S7",
+  "T0",  "T1",  "T2",  "T3",  "T4",  "T5",  "T6",  "T7",
+  "H0",  "H1",  "H2",  "H3",  "H4",  "H5",  "H6",  "H7",
+  NULL
+};
+
+bool bKeyGood;
+
+void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
+{
+  if(!bKeyGood && iName) return; // only allow for key
+  char *p, *p2;
+
+  switch(iEvent)
+  {
+    case 0: // cmd
+      switch(iName)
+      {
+        case 0: // key
+          if(!strcmp(psValue, controlPassword)) // first item must be key
+            bKeyGood = true;
+          break;
+        case 1: // OLED
+          ee.bEnableOLED = iValue ? true:false;
+          break;
+        case 2: // TZ
+          ee.tz = iValue;
+          getUdpTime();
+          break;
+        case 3: // avg
+          ee.bAvg = iValue;
+          break;
+        case 4: // cnt
+          ee.schedCnt = constrain(iValue, 1, 8);
+          ws.printfAll("set;%s", setJson().c_str()); // update all the entries
+          break;
+        case 5: // tadj
+          ee.schedule[schInd].setTemp += iValue*10;
+          ee.schedule[schInd].setTemp = constrain(ee.schedule[schInd].setTemp, 600,900);
+          break;
+        case 6: // ppkw
+          ee.ppkwh = iValue;
+          break;
+        case 7: // vaca
+          ee.bVaca = iValue;
+          break;
+        case 8: // vacatemp
+          ee.vacaTemp = constrain( (int)(atof(psValue)*10), 400, 800); // 40-80F
+          break;
+        case 9: // N0
+        case 10:
+        case 11:
+        case 12:
+        case 13:
+        case 14:
+        case 15:
+        case 16:
+          strncpy(ee.schNames[iName-9], psValue, sizeof(ee.schNames[0]) );
+          break;
+        case 17: // S0
+        case 18:
+        case 19:
+        case 20:
+        case 21:
+        case 22:
+        case 23:
+        case 24:
+          p = strtok(psValue, ":");
+          p2 = strtok(NULL, "");
+          if(p && p2){
+            iValue *= 60;
+            iValue += atoi(p2);
+          }
+          ee.schedule[iName-17].timeSch = iValue;
+          break;
+        case 25: // T0
+        case 26:
+        case 27:
+        case 28:
+        case 29:
+        case 30:
+        case 31:
+        case 32:
+          ee.schedule[iName-25].setTemp = atof(psValue)*10;
+          break;
+        case 33: // H0
+        case 34:
+        case 35:
+        case 36:
+        case 37:
+        case 38:
+        case 39:
+        case 40:
+          ee.schedule[iName-33].thresh = (int)(atof(psValue)*10);
+          checkLimits();      // constrain and check new values
+          checkSched(true);   // reconfigure to new schedule
+          break;
+      }
+      break;
+  }
+}
+
+void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len)
+{  //Handle WebSocket event
+  switch(type)
+  {
+    case WS_EVT_CONNECT:      //client connected
+      client->printf("state;%s", dataJson().c_str());
+      client->printf("set;%s", setJson().c_str());
+      client->ping();
+      break;
+    case WS_EVT_DISCONNECT:    //client disconnected
+      break;
+    case WS_EVT_ERROR:    //error was received from the other end
+      break;
+    case WS_EVT_PONG:    //pong message was received (in response to a ping request maybe)
+      break;
+    case WS_EVT_DATA:  //data packet
+      AwsFrameInfo * info = (AwsFrameInfo*)arg;
+      if(info->final && info->index == 0 && info->len == len){
+        //the whole message is in a single frame and we got all of it's data
+        if(info->opcode == WS_TEXT){
+          data[len] = 0;
+
+          char *pCmd = strtok((char *)data, ";"); // assume format is "name;{json:x}"
+          char *pData = strtok(NULL, "");
+          if(pCmd == NULL || pData == NULL) break;
+          bKeyGood = false; // for callback (all commands need a key)
+          jsonParse.process(pCmd, pData);
+        }
+      }
+      break;
+  }
+}
+
 void setup()
 {
   pinMode(TONE, OUTPUT);
@@ -607,6 +551,9 @@ void setup()
   // attach AsyncEventSource
   events.onConnect(onEvents);
   server.addHandler(&events);
+  // attach AsyncWebSocket
+  ws.onEvent(onWsEvent);
+  server.addHandler(&ws);
 
   server.on ( "/", HTTP_GET | HTTP_POST, handleRoot );
   server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
@@ -618,6 +565,7 @@ void setup()
 
   server.begin();
 
+  jsonParse.addList(jsonListCmd);
   MDNS.addService("http", "tcp", serverPort);
 
   if( ds.search(ds_addr) )
@@ -675,6 +623,7 @@ void loop()
         tempMedian.getMedian(roomTemp);
       }
       events.send(dataJson().c_str(), "state"); // update every 10 seconds
+      ws.printfAll("state;%s", dataJson().c_str());
     }
     if(min_save != minute()) // only do stuff once per minute
     {
@@ -878,6 +827,7 @@ void checkTemp()
     currentTemp = newTemp;
     oldHT = hiTemp;
     events.send(dataJson().c_str(), "state");
+    ws.printfAll("state;%s", dataJson().c_str());
   }
 
   if(currentTemp <= loTemp && bHeater == false)
@@ -891,6 +841,7 @@ void checkTemp()
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
     events.send(dataJson().c_str(), "state");
+    ws.printfAll("state;%s", dataJson().c_str());
   }
 }
 
