@@ -1,7 +1,7 @@
 // Waterbed stream listener and data logger using http://www.curioustech.net/pngmagic.html
 
-interval = 5 * 60
-Url = 'http://192.168.0.199:82/events?int=' + interval
+// Waterbed stream listener
+Url = 'http://192.168.0.104:82/events'
 var event
 var last
 
@@ -37,6 +37,7 @@ function OnCall(msg, event, data)
 
 function procLine(data)
 {
+	data = data.replace(/\n|\r/g, "")
 	if(data.length < 2) return
 	if(data == ':ok' )
 	{
@@ -62,7 +63,8 @@ function procLine(data)
 	{
 		case 'state':
 			LogWB(data)
-			Pm.Waterbed('REFRESH')
+			if(Pm.FindWindow('Waterbed'))
+				Pm.Waterbed('REFRESH')
 			break
 		case 'alert':
 			Pm.Echo('WB Alert: ' + data)
@@ -70,6 +72,11 @@ function procLine(data)
 			break
 		case 'print':
 			Pm.Echo('WB ' + data)
+			break
+		case 'hack':
+			hackJson = !(/[^,:{}\[\]0-9.\-+Eaeflnr-u \n\r\t]/.test(
+				data.replace(/"(\\.|[^"\\])*"/g, ''))) && eval('(' + data + ')')
+			Pm.Echo('WB Hack: ' + hackJson.ip + ' ' + hackJson.pass)
 			break
 	}
 	event = ''
@@ -93,14 +100,16 @@ function 	LogWB(str)
 
 	line = wbJson.waterTemp + ',' + wbJson.hiTemp + ',' + wbJson.loTemp + ',' + wbJson.on+ ',' + wbJson.temp
 
+	if(+wbJson.temp == 6553.5 || +wbJson.temp == 0)
+		return
+
 	if(line == last)
 		return
 	last = line
 
-	wbDate = new Date()
 	fso = new ActiveXObject( 'Scripting.FileSystemObject' )
 	tf = fso.OpenTextFile( 'Waterbed.log', 8, true)
-	tf.WriteLine( Math.floor(wbDate.getTime() / 1000) + ',' + line + ',' + wbJson.rh)
+	tf.WriteLine( wbJson.t + ',' + line + ',' + wbJson.rh)
 	tf.Close()
 	fso = null
 }
