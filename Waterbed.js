@@ -1,8 +1,7 @@
-// Chart display for waterbed temp, room temp/rh
+// Chart display for waterbed temp, room temp/rh  using http://www.curioustech.net/pngmagic.html
 
-wb_url = 'http://192.168.0.199:82/'
+wb_url = 'http://192.168.0.104:82/'
 
-Pm.Echo()
 Pm.Window( 'Waterbed' )
 ReadLogs()		// date, temp, rh
 moved = 0
@@ -11,8 +10,7 @@ dateNow = new Date()
 dateStart = dateNow  // start date of mouse down
 
 	wbWatts = 290
-	ppkwh = 0.126  // electric price per KWH  (price / KWH)
-	ppkwh  += 0.0846 + 0.03 // surcharge 10.1%, school 3%, misc
+	ppkwh = 0.14543  // electric price per KWH  (price / KWH)
 
 totalCost = 0
 totalTime = 0
@@ -29,6 +27,8 @@ function Setup()
 {
 	h1 = ArrayDuration( listWb ) // max hours of data
 	h1++		// max hours of data
+
+//	h1  = 20 // remove
 	h_show = 8 * 24	// max hours to show
 	if(h_show > h1 ) h_show = h1
 
@@ -39,6 +39,8 @@ function Setup()
 	wbmax = max
 	min = arrayMin(listWb, 5, min)
 	max = arrayMax(listWb, 5, max)
+	min = arrayMin(listWb, 3, min)
+	max = arrayMax(listWb, 2, max)
 	Http.Connect('Waterbed', wb_url + 'json')
 }
 
@@ -50,11 +52,9 @@ function OnMouse(Msg, x, y)
 			moved = 0
 			pos = x
 			if(x < left)
-			{
 				ReadLogs()
-			}else{
+			else
 				dateStart = dateNow
-			}
 			break
 		case 'LUP':
 			break
@@ -77,7 +77,7 @@ function OnMouse(Msg, x, y)
 	Draw(0)
 }
 
-function OnCall(msg, a1, data) // Called from SparkRemote
+function OnCall(msg, a1, data) // Called from WB.js
 {
 	switch(msg)
 	{
@@ -104,15 +104,16 @@ function OnTimer()
 // Let's draw this
 function Draw(fast)
 {
+	Gdi.Width = 600 // resize drawing area/window
+	Gdi.Height = 250
+
+	left = 60 // chart area
+	top = 23
+	bottom = Gdi.Height - 36
+	right = Gdi.Width - 30
+
 	if(!fast)
 	{
-		Gdi.Width = 600 // resize drawing area/window
-		Gdi.Height = 250
-
-		left = 60 // chart area
-		top = 23
-		bottom = Gdi.Height - 36
-		right = Gdi.Width - 34
 		Gdi.Clear(0) // all trasparent
 
 		Gdi.Brush( Gdi.Argb(120, 0, 0, 240) ) // drag bar
@@ -149,7 +150,7 @@ function Draw(fast)
 		{
 			x = right+20-( (t<0) ? 25:19 ) // shift negative left
 			if( t > -10 && t < 10) x += 6 // single digit
-			Gdi.Text( t.toFixed(0), x, y )
+			Gdi.Text( t.toFixed(1), x, y )
 			Gdi.Line(left, y+6, right+2, y+6)
 			y += incy
 			t -= dec
@@ -164,7 +165,7 @@ function Draw(fast)
 	Gdi.Font( 'Courier New', 10)
 	// Days and grid
 	days = Array('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
-	date1 = new Date(dateNow)
+	date1 = new Date()
 	day = date1.getDay()
 	d = date1.getDate()
 	hour = date1.getHours()
@@ -173,7 +174,7 @@ function Draw(fast)
 	if(listWb.length)
 	{
 		date = new Date( listWb[listWb.length-1][0] * 1000)
-		date1.setMinutes(date.getMinutes())
+		date1.setMinutes(0)
 		pt = (dateNow - date1) / (1000 * 60)
 		x =  (right - (pt * inc))
 
@@ -244,14 +245,14 @@ function Draw(fast)
 		tog = 5
 		tot = 0
 		totalTime = 0
-		color = Gdi.Argb(160, 255, 55, 55)
+		color = Gdi.Argb(255, 255, 255, 0)
 		lastHour = 0
 
 		for (i = 0; i < listWb.length; i++)
 		{
 			date = new Date(listWb[i][0] * 1000)
 			pt = (dateNow - date) / (1000 * 60)
-			x = (right - (pt * inc))
+			x = (right - (pt * inc)).toFixed(1)
 			hour = date.getHours()
 
 			if(hour != lastHour)
@@ -335,9 +336,9 @@ function Draw(fast)
 		Gdi.FillPolygon( ptThr1 )
 
 		// ambeint Temp color
-		Gdi.Pen(Gdi.Argb(160, 200, 50, 150), 1)
+		Gdi.Pen(Gdi.Argb(100, 255, 200, 20), 1)
 		Gdi.Lines( ptinTemp )
-		Gdi.Pen(Gdi.Argb(160, 10, 200, 10), 1)
+		Gdi.Pen(Gdi.Argb(100, 10, 200, 10), 1)
 		Gdi.Lines( ptRh )
 	}
 
@@ -387,7 +388,7 @@ function dateToX(d)
 
 function valToY(v)
 {
-	return (bottom - (v - min) * (bottom-top-1) / (max-min))
+	return (bottom - (v - min) * (bottom-top-1) / (max-min)).toFixed()
 }
 
 // get days of a month for wraparounds
@@ -437,6 +438,7 @@ function arrayMin(arr, n, min)
 		for ( i = 0; i < arr.length; i++)
 		{
 			t = +arr[i][n]
+			if(t == 0) Pm.Echo(i + ' ' + n)
 			if(min > t) min = t
 		}
 		return min
@@ -454,7 +456,7 @@ function arrayMax(arr, n, max)
 // Save an array to a file
 function SaveArray(name, arr)
 {
-	max_hours = 24 * 10
+	max_hours = 24 * 15
 	if( ArrayDuration( arr ) <  max_hours) return // check array duration
 
 	tf = fso.CreateTextFile(name, true)
