@@ -9,6 +9,7 @@ struct Sched
   uint16_t timeSch;
   uint8_t thresh;
   uint8_t wday;  // Todo: weekday 0=any, 1-7 = day of week
+  char    name[16]; // 128  names for small display
 };
 
 #define MAX_SCHED 8
@@ -26,9 +27,10 @@ struct eeSet // EEPROM backed data
   bool    bAvg;         // average target between schedules
   bool    bEnableOLED;
   bool    bRes;
-  char    schNames[MAX_SCHED][16]; // 128  names for small display
   Sched   schedule[MAX_SCHED];  // 48 bytes
-  uint32_t ppkwh, res;
+  uint16_t ppkwh;
+  uint16_t rate;
+  uint32_t res[2];
 };
 
 extern eeSet ee;
