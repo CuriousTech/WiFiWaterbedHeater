@@ -1,4 +1,3 @@
-// Chart display for waterbed temp, room temp/rh  using http://www.curioustech.net/pngmagic.html
 
 wb_url = 'http://192.168.0.104:82/'
 
@@ -10,7 +9,7 @@ dateNow = new Date()
 dateStart = dateNow  // start date of mouse down
 
 	wbWatts = 290
-	ppkwh = 0.14543  // electric price per KWH  (price / KWH)
+	ppkwh = 0.1455  // electric price per KWH  (price / KWH)
 
 totalCost = 0
 totalTime = 0
@@ -88,6 +87,7 @@ function OnCall(msg, a1, data) // Called from WB.js
 		case 'BUTTON':
 			break
 		case 'HTTPDATA':
+//Pm.Echo(data)
 			wbJson = !(/[^,:{}\[\]0-9.\-+Eaeflnr-u \n\r\t]/.test(
 				data.replace(/"(\\.|[^"\\])*"/g, ''))) && eval('(' + data + ')')
 			Draw(0)
@@ -292,26 +292,20 @@ function Draw(fast)
 				Gdi.Pen(color, 1)
 				Gdi.Lines( ptTemp )
 				ptTemp = new Array()
-				ptTemp[ptTemp.length] = x
-				ptTemp[ptTemp.length] = y
+				ptTemp.push(x, y)
 			}
 
 			if( x >= left)
 			{
-				ptTemp[ptTemp.length] = x
-				ptTemp[ptTemp.length] = y
+				ptTemp.push(x, y)
 				tH = +listWb[i][2] // target
 				tL = +listWb[i][3]
-				ptThr1[ptThr1.length] = x
-				ptThr1[ptThr1.length] = valToY(tH)
-				ptThr2[ptThr2.length] = 	valToY(tL)
-				ptThr2[ptThr2.length] = x
+				ptThr1.push( x, valToY(tH) )
+				ptThr2.push( valToY(tL), x )
 
-				ptinTemp[ptinTemp.length] = x
-				ptinTemp[ptinTemp.length] = valToY( +listWb[i][5] )
+				ptinTemp.push( x, valToY( +listWb[i][5] ) )
 
-				ptRh[ptRh.length] = x
-				ptRh[ptRh.length] = bottom - (+listWb[i][6]) * (bottom-top) / 100
+				ptRh.push( x, bottom - (+listWb[i][6]) * (bottom-top) / 100 )
 			}
 		}
 
@@ -350,7 +344,7 @@ function Draw(fast)
 //		Gdi.OutlineText('$' + dayCost.toFixed(2), x-20+(600*inc), bottom+23, 3, 'Right')
 	}
 
-	if(wbJson != undefined)
+	if(wbJson.hiTemp)
 	{
 		Gdi.Font( 'Crystal clear' , 10, 'Regular')
 		Gdi.Pen(Gdi.Argb(255, 0, 0, 0), 1 )
@@ -419,7 +413,7 @@ function LoadArray(name, arr)
 	lt = 0
 	while( !tf.AtEndOfStream)
 	{
-		arr[arr.length] = tf.ReadLine().split( ',' )
+		arr.push( tf.ReadLine().split( ',' ) )
 	}
 	tf.Close()
 }
