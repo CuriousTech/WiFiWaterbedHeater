@@ -90,6 +90,10 @@ uint32_t onCounter;
 float fTotalCost;
 float fLastTotalCost;
 
+int toneFreq;
+int tonePeriod;
+bool bTone;
+
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonParse jsonParse(jsonCallback);
 
@@ -158,7 +162,6 @@ void parseParams(AsyncWebServerRequest *request)
   static char temp[256];
   char password[64];
   int val;
-  int freq = 0;
 
  if(request->params() == 0)
     return;
@@ -206,11 +209,12 @@ void parseParams(AsyncWebServerRequest *request)
     int which = p->name().charAt(1) - '0'; // limitation = 9
     if(which >= MAX_SCHED) which = MAX_SCHED - 1; // safety
     val = s.toInt();
-//    bool b = (s == "true") ? true:false;
 
     switch( p->name().charAt(0)  )
     {
       case 'm':  // message
+      Serial.print("Msg: ");
+      Serial.println(s);
         sMessage = s;
         sMessage += " ";
         msgCnt = 4;
@@ -224,10 +228,12 @@ void parseParams(AsyncWebServerRequest *request)
         ee.rate = val;
         break;
       case 'f': // frequency
-        freq = val;
+        toneFreq = val;
+        bTone = true;
         break;
       case 'b': // beep : ?f=1200&b=1000
-        Tone(TONE, freq, val);
+        tonePeriod = val;
+        bTone = true;
         break;
       case 's':
         s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
@@ -380,6 +386,8 @@ const char *jsonListCmd[] = { "cmd",
   "S0",  "S1",  "S2",  "S3",  "S4",  "S5",  "S6",  "S7",
   "T0",  "T1",  "T2",  "T3",  "T4",  "T5",  "T6",  "T7",
   "H0",  "H1",  "H2",  "H3",  "H4",  "H5",  "H6",  "H7",
+  "beepF",
+  "beepP",
   NULL
 };
 
@@ -389,6 +397,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 {
   if(!bKeyGood && iName) return; // only allow for key
   char *p, *p2;
+  static int beepPer = 1000;
 
   switch(iEvent)
   {
@@ -473,6 +482,14 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           ee.schedule[iName-33].thresh = (int)(atof(psValue)*10);
           checkLimits();      // constrain and check new values
           checkSched(true);   // reconfigure to new schedule
+          break;
+       case 41: // beepF
+          bTone = true;
+          toneFreq = iValue;
+          break;
+       case 42: // beepP (beep period)
+          tonePeriod = iValue;
+          bTone = true;
           break;
       }
       break;
@@ -592,6 +609,9 @@ void setup()
     reportReq(request); // report requests to the PC over event source
 //    request->send(404);
   });
+  server.on("/heap", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", String(ESP.getFreeHeap()));
+  });
 
   server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
   });
@@ -640,6 +660,12 @@ void loop()
     if(utime.check(ee.tz))
       checkSched(true);  // initialize
 
+  if(bTone)
+  {
+    Tone(TONE, toneFreq, tonePeriod);
+    bTone = false;
+  }
+  
   if(sec_save != second()) // only do stuff once per second
   {
     sec_save = second();
@@ -700,20 +726,17 @@ void loop()
       onCounter = 0;
     }
   }
-  if(!wifi.isCfg())
-    DrawScreen();
-}
+  if(wifi.isCfg())
+    return;
 
-void DrawScreen()
-{
+  // Draw screen
   static bool blnk = false;
   static long last;
-  static int8_t msgCnt = 0;
 
   // draw the screen here
   display.clear();
 
-  if( (millis() - last) > 400) // 400ms togle for blinker
+  if( (millis() - last) > 400) // 400ms toggle for blinker
   {
     last = millis();
     blnk = !blnk;
@@ -782,7 +805,8 @@ void Scroller(String s)
   last = s.charAt(0);
   int len = s.length(); // get length before overlap added
   s += s.substring(0, 18); // add ~screen width overlap
-  int w = display.propCharWidth(s.charAt(ind)); // first char for measure
+  int w = display.propCharWidth(s.charAt(ind)); // measure first char
+  if(w > 100) w = 10; // bug in function (0 returns 11637)
   String sPart = s.substring(ind, ind + 18);
   display.drawPropString(x, 0, sPart );
 
@@ -795,7 +819,7 @@ void Scroller(String s)
       if(msgCnt) // end of custom message display
       {
         if(--msgCnt == 0) // decrement times to repeat it
-            sMessage = "";
+            sMessage = String();
       }
     }
   }
