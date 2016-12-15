@@ -14,7 +14,6 @@
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
-#include <WiFiClient.h>
 
 #define DEBUG //until arduino ide can include defines at compile time from main sketch
 
@@ -29,14 +28,14 @@ class WiFiManager
 {
 public:
     WiFiManager();
-    boolean autoConnect(void);
-    boolean autoConnect(char const *apName);
-    boolean findOpenAP(char const *szUrl);
+    void autoConnect(void);
+    void autoConnect(char const *apName);
+    String page(void);
+    void seconds(void);
+    void setPass(const char *p);
+    bool isCfg(void);
 
     boolean hasConnected();
-    
-    void beginConfigMode(void);
-    void startWebConfig(String ssid);
 
     //for convenience
     String urldecode(const char*);
@@ -44,10 +43,9 @@ private:
     const int WM_DONE = 0;
     const int WM_WAIT = 10;
     bool _timeout;
+    bool _bCfg;
 
-    const String HTTP_404 = "HTTP/1.1 404 Not Found\r\n\r\n";
-    const String HTTP_200 = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
-    const String HTTP_HEAD = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>{v}</title>";
+    const String HTTP_HEAD = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>Config ESP</title>";
     const String HTTP_STYLE = "<style>div,input {margin-bottom: 5px;}body{width:200px;display:block;margin-left:auto;margin-right:auto;}</style>";
     const String HTTP_SCRIPT = "<script>function c(l){document.getElementById('s').value=l.innerText||l.textContent;document.getElementById('p').focus();}</script>";
     const String HTTP_HEAD_END = "</head><body>";
@@ -56,11 +54,7 @@ private:
     const String HTTP_END = "</body></html>";
     
     const char* _apName = "no-net";
-    String _ssid = "";
-    String _pass = "";
 
-    int serverLoop(void);
-    boolean attemptClient(const char *szUrl);
     void drawSpinner(int count, int active);
 };
 
