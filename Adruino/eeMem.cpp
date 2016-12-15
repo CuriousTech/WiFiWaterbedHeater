@@ -9,19 +9,21 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
   false,                   // active schedules, vacation mode
   false,                   // average
   true,                   // OLED
-  false,                   // res
-  {"Morning", "Noon", "Day", "Night", "Sch5", "Sch6", "Sch7", "Sch8"},
+  false,
   {
-    {830,  7*60, 5, 0},  // temp, time, thresh, wday
-    {810, 11*60, 3, 0},
-    {810, 17*60, 3, 0},
-    {835, 20*60, 3, 0},
-    {830,  0*60, 3, 0},
-    {830,  0*60, 3, 0},
-    {830,  0*60, 3, 0},
-    {830,  0*60, 3, 0}
+    {830,  7*60, 5, 0, "Morning"},  // temp, time, thresh, wday
+    {810, 11*60, 3, 0, "Noon"},
+    {810, 17*60, 3, 0, "Day"},
+    {835, 20*60, 3, 0, "Night"},
+    {830,  0*60, 3, 0, "Sch5"},
+    {830,  0*60, 3, 0, "Sch6"},
+    {830,  0*60, 3, 0, "Sch7"},
+    {830,  0*60, 3, 0, "Sch8"}
   },
-  1457,0,
+  1457, // ppkwh
+  60, // rate
+  0,
+  0,
 };
 
 eeMem::eeMem()
