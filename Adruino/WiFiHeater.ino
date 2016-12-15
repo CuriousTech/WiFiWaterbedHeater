@@ -21,23 +21,30 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+//#define USE_SPIFFS
+
 #include <Wire.h>
 #include <ssd1306_i2c.h> // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/ssd1306_i2c
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
 #include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
+#ifdef USE_SPIFFS
+#include <FS.h>
+#include <SPIFFSEditor.h>
+#else
+#include "pages.h"
+#endif
 #include <OneWire.h>
-#include <WiFiUdp.h>
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
+#include <UdpTime.h>
 #include <DHT.h>  // http://www.github.com/markruys/arduino-DHT
 #include "eeMem.h"
 #include "RunningMedian.h"
-#include "pages.h"
-#include <JsonClient.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonClient
+#include <JsonParse.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonParse
 
 const char controlPassword[] = "password";    // device password for modifying any settings
-const int serverPort = 82;                    // port fwd for fwdip.php
+const int serverPort = 82;                    // HTTP port
 const int watts = 290;                        // standard waterbed heater wattage (300) or measured watts
 
 #define EXPAN1    0  // side expansion pad
@@ -67,16 +74,10 @@ AsyncWebServer server( serverPort );
 AsyncEventSource events("/events"); // event source (Server-Sent events)
 AsyncWebSocket ws("/ws"); // access at ws://[esp ip]/ws
 
-const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
-byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
-WiFiUDP Udp;
-bool bNeedUpdate;
-uint8_t  dst;           // current dst
+UdpTime utime;
 
 uint16_t roomTemp;
 uint16_t rh;
-
-int httpPort = 80; // may be modified by open AP scan
 
 int currentTemp = 850;
 int hiTemp; // current target
@@ -90,7 +91,7 @@ float fTotalCost;
 float fLastTotalCost;
 
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
-JsonClient jsonParse(jsonCallback);
+JsonParse jsonParse(jsonCallback);
 
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
@@ -105,79 +106,50 @@ float currCost()
 String dataJson()
 {
   String s = "{";
-  s += "\"t\": ";
-  s += now() - ((ee.tz + dst) * 3600);
-  s += ",\"waterTemp\": ";
-  s += sDec(currentTemp);
-  s += ",\"setTemp\": ";
-  s += sDec(ee.schedule[schInd].setTemp);
-  s += ", \"hiTemp\": ";
-  s += sDec(hiTemp);
-  s += ", \"loTemp\": ";
-  s += sDec(loTemp);
-  s += ", \"on\": ";
-  s += bHeater;
-  s += ", \"temp\": ";
-  s += sDec(roomTemp);
-  s += ", \"rh\": ";
-  s += sDec(rh);
-  s += ", \"tc\": ";
-  s += String(currCost(), 2);
+  s += "\"t\": ";  s += now() - ((ee.tz + utime.getDST()) * 3600);
+  s += ",\"waterTemp\": "; s += sDec(currentTemp);
+  s += ",\"setTemp\": ";  s += sDec(ee.schedule[schInd].setTemp);
+  s += ", \"hiTemp\": ";  s += sDec(hiTemp);
+  s += ", \"loTemp\": ";  s += sDec(loTemp);
+  s += ", \"on\": ";    s += bHeater;
+  s += ", \"temp\": ";  s += sDec(roomTemp);
+  s += ", \"rh\": ";   s += sDec(rh);
+  s += ", \"tc\": ";   s += String(currCost(), 2);
   s += "}";
   return s;
 }
 
 String setJson() // settings
 {
-  String s = "{";
+  String s = "{\"item\":[";
+  
   for(int i = 0; i < 8; i++)
   {
-    s += "\"N";
-    s += i;
-    s += "\":\"";
-    s += ee.schNames[i];
-    s += "\",\"S";
-    s += i;
-    s += "\":\"";
+    if(i) s += ",";
+    s += "[\"";  s += ee.schedule[i].name; s += "\",\"";
     int h = ee.schedule[i].timeSch / 60;
     int m = ee.schedule[i].timeSch % 60;
-    s += h;
-    s += ":";
+    s += h;  s += ":";
     if(m<10) s += "0";
     s += m;
-    s += "\",\"T";
-    s += i;
-    s += "\":";
-    s += sDec(ee.schedule[i].setTemp);
-    s += ",\"H";
-    s += i;
-    s += "\":";
-    s += sDec(ee.schedule[i].thresh);
-    s += ",";
+    s += "\","; s += sDec(ee.schedule[i].setTemp);
+    s += ",";  s += sDec(ee.schedule[i].thresh);
+    s += "]";
   }
-  s += "\"vt\":";
-  s += sDec(ee.vacaTemp);
-  s += ",\"o\":";
-  s += ee.bEnableOLED;
-  s += ",\"tz\":";
-  s += ee.tz;
-  s += ",\"avg\":";
-  s += ee.bAvg;
-  s += ",\"ppkwh\":";
-  s += ee.ppkwh;
-  s += ",\"vo\":";
-  s += ee.bVaca;
-  s += ",\"idx\":";
-  s += schInd;
-  s += ",\"cnt\":";
-  s += ee.schedCnt;
-  s += ",\"tc2\":\"";
-  s += months[(month()+10)%12]; // last month
-  s += ": $";
-  s += String(fLastTotalCost, 2);
-  s += "\",\"m\":\"";
-  s += months[month()]; // this month
-  s += "\"}";
+  s += "]";
+  s += ",\"vt\":";   s += sDec(ee.vacaTemp);
+  s += ",\"o\":";   s += ee.bEnableOLED;
+  s += ",\"tz\":";  s += ee.tz;
+  s += ",\"avg\":";  s += ee.bAvg;
+  s += ",\"ppkwh\":"; s += ee.ppkwh;
+  s += ",\"vo\":";   s += ee.bVaca;
+  s += ",\"idx\":";  s += schInd;
+  s += ",\"cnt\":";  s += ee.schedCnt;
+  s += ",\"tc2\":\""; s += months[(month()+10)%12]; // last month
+  s += ": $";  s += String(fLastTotalCost, 2);
+  s += "\",\"m\":\""; s += months[month()-1]; // this month
+  s += "\",\"r\":"; s += ee.rate;
+  s += "}";
   return s;
 }
 
@@ -234,46 +206,37 @@ void parseParams(AsyncWebServerRequest *request)
     int which = p->name().charAt(1) - '0'; // limitation = 9
     if(which >= MAX_SCHED) which = MAX_SCHED - 1; // safety
     val = s.toInt();
-    bool b = (s == "true") ? true:false;
+//    bool b = (s == "true") ? true:false;
 
     switch( p->name().charAt(0)  )
     {
       case 'm':  // message
-          sMessage = s;
-          sMessage += " ";
-          msgCnt = 4;
-          if(ee.bEnableOLED == false)
-          {
-            displayOnTimer = 60;
-          }
-          break;
+        sMessage = s;
+        sMessage += " ";
+        msgCnt = 4;
+        if(ee.bEnableOLED == false)
+        {
+          displayOnTimer = 60;
+        }
+        break;
+      case 'r': // rate
+        if(val == 0) val = 1; // don't allow 0
+        ee.rate = val;
+        break;
       case 'f': // frequency
-          freq = val;
-          break;
+        freq = val;
+        break;
       case 'b': // beep : ?f=1200&b=1000
-          Tone(TONE, freq, val);
-          break;
+        Tone(TONE, freq, val);
+        break;
+      case 's':
+        s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
+        break;
+      case 'p':
+        wifi.setPass(s.c_str());
+        break;
     }
   }
-}
-
-void onBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
-  //Handle body
-}
-
-void onUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
-  //Handle upload
-}
-
-void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
-{
-//  digitalWrite(LED, HIGH);
-  Serial.println("handleRoot");
-
-  parseParams(request);
-
-  request->send_P( 200, "text/html", page1 );
-//  digitalWrite(LED, LOW);
 }
 
 String sDec(int t) // just 123 to 12.3 string
@@ -306,6 +269,78 @@ String timeFmt(bool do_sec, bool do_M)
   return r;
 }
 
+void reportReq(AsyncWebServerRequest *request) // report full request to PC
+{
+  String s = "{\"remote\":\"";
+  s += request->client()->remoteIP().toString();
+  s += "\",\"method\":\"";
+  switch(request->method())
+  {
+    case HTTP_GET: s += "GET"; break;
+    case HTTP_POST: s += "POST"; break;
+    case HTTP_DELETE: s += "DELETE"; break;
+    case HTTP_PUT: s += "PUT"; break;
+    case HTTP_PATCH: s += "PATCH"; break;
+    case HTTP_HEAD: s += "HEAD"; break;
+    case HTTP_OPTIONS: s += "OPTIONS"; break;
+    default: s += "<unknown>"; break;
+  }
+  s += "\",\"host\":\"";
+  s += request->host();
+  s += "\",\"url\":\"";
+  s += request->url();
+  s += "\"";
+  if(request->contentLength()){
+    s +=",\"contentType\":\"";
+    s += request->contentType().c_str();
+    s += "\",\"contentLen\":";
+    s += request->contentLength();
+  }
+
+  int headers = request->headers();
+  int i;
+  if(headers)
+  {
+    s += ",\"header\":[";
+    for(i = 0; i < headers; i++){
+      AsyncWebHeader* h = request->getHeader(i);
+      if(i) s += ",";
+      s +="\"";
+      s += h->name().c_str();
+      s += "=";
+      s += h->value().c_str();
+      s += "\"";
+    }
+    s += "]";
+  }
+  int params = request->params();
+  if(params)
+  {
+    s += ",\"params\":[";
+    for(i = 0; i < params; i++)
+    {
+      AsyncWebParameter* p = request->getParam(i);
+      if(i) s += ",";
+      s += "\"";
+      if(p->isFile()){
+        s += "FILE";
+      } else if(p->isPost()){
+        s += "POST";
+      } else {
+        s += "GET";
+      }
+      s += ",";
+      s += p->name().c_str();
+      s += "=";
+      s += p->value().c_str();
+      s += "\"";
+    }
+    s += "]";
+  }
+  s +="}";
+  events.send(s.c_str(), "request");
+}
+
 void handleS(AsyncWebServerRequest *request) { // standard params, but no page
   Serial.println("handleS\n");
   parseParams(request);
@@ -316,60 +351,18 @@ void handleS(AsyncWebServerRequest *request) { // standard params, but no page
   page += serverPort;
   page += "\"}";
   request->send ( 200, "text/json", page );
-}
-
-// Return lots of vars as JSON
-void handleJson(AsyncWebServerRequest *request)
-{
-  Serial.println("handleJson\n");
-  String page = "{";
-  for(int i = 0; i < 8; i++)
-  {
-    page += "\"setTemp";
-    page += i;
-    page += "\": ";
-    page += sDec(ee.schedule[i].setTemp);
-    page += ", ";
-    page += "\"timeSch";
-    page += i;
-    page += "\": ";
-    page += ee.schedule[i].timeSch;
-    page += ", ";
-    page += "\"Thresh";
-    page += i;
-    page += "\": ";
-    page += sDec(ee.schedule[i].thresh);
-    page += ", ";
-  }
-  page += "\"waterTemp\": ";
-  page += sDec(currentTemp);
-  page += ", \"hiTemp\": ";
-  page += sDec(hiTemp);
-  page += ", \"loTemp\": ";
-  page += sDec(loTemp);
-  page += ", \"schInd\": ";
-  page += schInd;
-  page += ", \"schedCnt\": ";
-  page += ee.schedCnt;
-  page += ", \"on\": ";
-  page += bHeater;
-  page += ", \"temp\": ";
-  page += sDec(roomTemp);
-  page += ", \"rh\": ";
-  page += sDec(rh);
-  page += "}";
-
-  request->send( 200, "text/json", page );
-}
-
-void onRequest(AsyncWebServerRequest *request){
-  //Handle Unknown Request
-  request->send(404);
+  reportReq(request);
 }
 
 void onEvents(AsyncEventSourceClient *client)
 {
 //  client->send(":ok", NULL, millis(), 1000);
+  static bool rebooted = true;
+  if(rebooted)
+  {
+    rebooted = false;
+    events.send("Restarted", "alert");
+  }
   events.send(dataJson().c_str(), "state");
 }
 
@@ -411,7 +404,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           break;
         case 2: // TZ
           ee.tz = iValue;
-          getUdpTime();
+          utime.start();
           break;
         case 3: // avg
           ee.bAvg = iValue;
@@ -441,7 +434,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
         case 14:
         case 15:
         case 16:
-          strncpy(ee.schNames[iName-9], psValue, sizeof(ee.schNames[0]) );
+          strncpy(ee.schedule[iName-9].name, psValue, sizeof(ee.schedule[0].name) );
           break;
         case 17: // S0
         case 18:
@@ -488,9 +481,16 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 
 void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len)
 {  //Handle WebSocket event
+  static bool bRestarted = true;
+
   switch(type)
   {
     case WS_EVT_CONNECT:      //client connected
+      if(bRestarted)
+      {
+        bRestarted = false;
+        client->printf("alert;restarted");
+      }
       client->printf("state;%s", dataJson().c_str());
       client->printf("set;%s", setJson().c_str());
       client->ping();
@@ -519,6 +519,8 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
   }
 }
 
+const char hostName[] = "Waterbed";
+
 void setup()
 {
   pinMode(TONE, OUTPUT);
@@ -536,17 +538,25 @@ void setup()
 //  delay(3000);
   Serial.println();
 
-  WiFi.hostname("waterbed");
-  wifi.autoConnect("Waterbed"); // Tries all open APs, then starts softAP mode for config
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  if ( !MDNS.begin ( "waterbed", WiFi.localIP() ) ) {
-    Serial.println ( "MDNS responder failed" );
+  WiFi.hostname(hostName);
+  wifi.autoConnect(hostName); // Tries config AP, then starts softAP mode for config
+  if(wifi.isCfg() == false)
+  {
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  
+    if ( !MDNS.begin ( hostName, WiFi.localIP() ) )
+      Serial.println ( "MDNS responder failed" );
   }
+
+  MDNS.addService("http", "tcp", serverPort);
+
+#ifdef USE_SPIFFS
+  SPIFFS.begin();
+  server.addHandler(new SPIFFSEditor("admin", controlPassword));
+#endif
 
   // attach AsyncEventSource
   events.onConnect(onEvents);
@@ -555,18 +565,41 @@ void setup()
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
 
-  server.on ( "/", HTTP_GET | HTTP_POST, handleRoot );
+  server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request) // Main webpage interface
+  {
+    parseParams(request);
+    if(wifi.isCfg())
+      request->send( 200, "text/html", wifi.page() ); // WIFI config page
+    else
+    {
+    #ifdef USE_SPIFFS
+      request->send(SPIFFS, "/index.htm");
+    #else
+      request->send_P(200, "text/html", page1);
+    #endif
+    }
+    reportReq(request);
+  });
   server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
-  server.on ( "/json", HTTP_GET | HTTP_POST, handleJson );
+  server.on ( "/set", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send( 200, "text/json", setJson() );
+  });
+  server.on ( "/json", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send( 200, "text/json", dataJson() );
+  });
 
-  server.onNotFound(onRequest);
-  server.onFileUpload(onUpload);
-  server.onRequestBody(onBody);
+  server.onNotFound([](AsyncWebServerRequest *request){ // be silent
+    reportReq(request); // report requests to the PC over event source
+//    request->send(404);
+  });
 
+  server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+  });
+  server.onRequestBody([](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+  });
   server.begin();
 
   jsonParse.addList(jsonListCmd);
-  MDNS.addService("http", "tcp", serverPort);
 
   if( ds.search(ds_addr) )
   {
@@ -584,12 +617,14 @@ void setup()
   {
     Serial.println("No OneWire devices");
   }
-
-  getUdpTime();
+  if(wifi.isCfg() == false)
+    utime.start();
 
   Tone(TONE, 2600, 200);
   dht.setup(EXPAN1, DHT::DHT22);
 }
+
+uint16_t ssCnt = ee.rate ? ee.rate : 60;
 
 void loop()
 {
@@ -601,9 +636,8 @@ void loop()
   MDNS.update();
 
   checkButtons();
-
-  if(bNeedUpdate)
-    if(checkUdpTime())
+  if(!wifi.isCfg())
+    if(utime.check(ee.tz))
       checkSched(true);  // initialize
 
   if(sec_save != second()) // only do stuff once per second
@@ -622,9 +656,13 @@ void loop()
         tempMedian.add((uint16_t)(dht.toFahrenheit(dht.getTemperature()) * 10));
         tempMedian.getMedian(roomTemp);
       }
-      events.send(dataJson().c_str(), "state"); // update every 10 seconds
-      ws.printfAll("state;%s", dataJson().c_str());
     }
+
+    if(--ssCnt == 0)
+    {
+       sendState();
+    }
+
     if(min_save != minute()) // only do stuff once per minute
     {
       min_save = minute();
@@ -634,7 +672,7 @@ void loop()
         eemem.update(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
         if( (hour_save = hour()) == 2)
         {
-          getUdpTime();
+          utime.start();
         }
         if(mon_save != month())
         {
@@ -662,7 +700,8 @@ void loop()
       onCounter = 0;
     }
   }
-  DrawScreen();
+  if(!wifi.isCfg())
+    DrawScreen();
 }
 
 void DrawScreen()
@@ -685,7 +724,7 @@ void DrawScreen()
     display.setFontScale2x2(false); // the small text
     display.drawString( 8, 22, "Temp");
     display.drawString(80, 22, "Set");
-    const char *ps = ee.bVaca ? "Vacation" : ee.schNames[schInd];
+    const char *ps = ee.bVaca ? "Vacation" : ee.schedule[schInd].name;
     display.drawString(90-(strlen(ps) << 2), 55, ps);
 
     String s;
@@ -826,23 +865,28 @@ void checkTemp()
   {
     currentTemp = newTemp;
     oldHT = hiTemp;
-    events.send(dataJson().c_str(), "state");
-    ws.printfAll("state;%s", dataJson().c_str());
+    sendState();
   }
 
   if(currentTemp <= loTemp && bHeater == false)
   {
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
-    events.send(dataJson().c_str(), "state"); // give a more precise account of changes
+    sendState();
   }
   else if(currentTemp >= hiTemp && bHeater == true)
   {
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
-    events.send(dataJson().c_str(), "state");
-    ws.printfAll("state;%s", dataJson().c_str());
+    sendState();
   }
+}
+
+void sendState()
+{
+  events.send(dataJson().c_str(), "state");
+  ws.printfAll("state;%s", dataJson().c_str());
+  ssCnt = ee.rate;
 }
 
 // Check the buttons
@@ -911,7 +955,7 @@ void checkButtons()
   lbState[1] = bDn;
 }
 
-void changeTemp(int8_t delta)
+void changeTemp(int delta)
 {
   ee.schedule[schInd].setTemp += delta;
   checkLimits();
@@ -992,118 +1036,10 @@ int tween(int t1, int t2, int m, int range)
   return t + t1;
 }
 
-void DST() // 2016 starts 2AM Mar 13, ends Nov 6
-{
-  tmElements_t tm;
-  breakTime(now(), tm);
-  // save current time
-  uint8_t m = tm.Month;
-  int8_t d = tm.Day;
-  int8_t dow = tm.Wday;
-
-  tm.Month = 3; // set month = Mar
-  tm.Day = 14; // day of month = 14
-  breakTime(makeTime(tm), tm); // convert to get weekday
-
-  uint8_t day_of_mar = (7 - tm.Wday) + 8; // DST = 2nd Sunday
-
-  tm.Month = 11; // set month = Nov (0-11)
-  tm.Day = 7; // day of month = 7 (1-30)
-  breakTime(makeTime(tm), tm); // convert to get weekday
-
-  uint8_t day_of_nov = (7 - tm.Wday) + 1;
-
-  if ((m  >  3 && m < 11 ) ||
-      (m ==  3 && d > day_of_mar) ||
-      (m ==  3 && d == day_of_mar && hour() >= 2) ||  // DST starts 2nd Sunday of March;  2am
-      (m == 11 && d <  day_of_nov) ||
-      (m == 11 && d == day_of_nov && hour() < 2))   // DST ends 1st Sunday of November; 2am
-   dst = 1;
- else
-   dst = 0;
-}
-
-
 void Tone(uint8_t _pin, unsigned int frequency, unsigned long duration)
 {
   analogWriteFreq(frequency);
   analogWrite(_pin, 500);
   delay(duration);
   analogWrite(_pin,0);
-}
-
-void getUdpTime()
-{
-  if(bNeedUpdate) return;
-  Serial.println("getUdpTime");
-  Udp.begin(2390);
-  // set all bytes in the buffer to 0
-  memset(packetBuffer, 0, NTP_PACKET_SIZE);
-  // Initialize values needed to form NTP request
-  // (see URL above for details on the packets)
-  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  packetBuffer[1] = 0;     // Stratum, or type of clock
-  packetBuffer[2] = 6;     // Polling Interval
-  packetBuffer[3] = 0xEC;  // Peer Clock Precision
-  // 8 bytes of zero for Root Delay & Root Dispersion
-  packetBuffer[12]  = 49;
-  packetBuffer[13]  = 0x4E;
-  packetBuffer[14]  = 49;
-  packetBuffer[15]  = 52;
-  
-  // all NTP fields have been given values, now
-  // you can send a packet requesting a timestamp:
-  // time.nist.gov
-  Udp.beginPacket("0.us.pool.ntp.org", 123); //NTP requests are to port 123
-  Udp.write(packetBuffer, NTP_PACKET_SIZE);
-  Udp.endPacket();
-  bNeedUpdate = true;
-}
-
-bool checkUdpTime()
-{
-  static int retry = 0;
-
-  if(!Udp.parsePacket())
-  {
-    if(++retry > 500)
-     {
-        bNeedUpdate = false;
-        getUdpTime();
-        retry = 0;
-     }
-    return false;
-  }
-  Serial.println("checkUdpTime good");
-
-  // We've received a packet, read the data from it
-  Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
-
-  Udp.stop();
-  // the timestamp starts at byte 40 of the received packet and is four bytes,
-  // or two words, long. First, extract the two words:
-
-  unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-  unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-  unsigned long secsSince1900 = highWord << 16 | lowWord;
-  // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
-  const unsigned long seventyYears = 2208988800UL;
-  long timeZoneOffset = 3600 * (ee.tz + dst);
-  unsigned long epoch = secsSince1900 - seventyYears + timeZoneOffset + 1; // bump 1 second
-
-  // Grab the fraction
-//  highWord = word(packetBuffer[44], packetBuffer[45]);
-//  lowWord = word(packetBuffer[46], packetBuffer[47]);
-//  unsigned long d = (highWord << 16 | lowWord) / 4295000; // convert to ms
-
-  setTime(epoch);
-  DST(); // check the DST and reset clock
-  timeZoneOffset = 3600 * (ee.tz + dst);
-  epoch = secsSince1900 - seventyYears + timeZoneOffset + 1; // bump 1 second
-  setTime(epoch);
-  
-//  Serial.print("Time ");
-//  Serial.println(timeFmt(true, true));
-  bNeedUpdate = false;
-  return true;
 }
