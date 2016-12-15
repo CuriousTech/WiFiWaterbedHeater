@@ -1,7 +1,6 @@
-// Waterbed stream listener and data logger using http://www.curioustech.net/pngmagic.html
-
-// Waterbed stream listener
-Url = 'http://192.168.0.104:82/events'
+// Waterbed stream listener using PngPagic (http://www.curioustech.net/pngmagic.html)
+wbIP = '192.168.0.104'
+Url = 'http://' + wbIP + ':82/events'
 var event
 var last
 
@@ -73,6 +72,9 @@ function procLine(data)
 		case 'print':
 			Pm.Echo('WB ' + data)
 			break
+		case 'request':
+			dumpReq(data)
+			break
 		case 'hack':
 			hackJson = !(/[^,:{}\[\]0-9.\-+Eaeflnr-u \n\r\t]/.test(
 				data.replace(/"(\\.|[^"\\])*"/g, ''))) && eval('(' + data + ')')
@@ -112,4 +114,38 @@ function 	LogWB(str)
 	tf.WriteLine( wbJson.t + ',' + line + ',' + wbJson.rh)
 	tf.Close()
 	fso = null
+}
+
+function dumpReq(data)
+{
+	Json = !(/[^,:{}\[\]0-9.\-+Eaeflnr-u \n\r\t]/.test(
+		data.replace(/"(\\.|[^"\\])*"/g, ''))) && eval('(' + data + ')')
+
+	Pm.Echo('WB Req: R=' + Json.remote + ' H=' + Json.host)
+	Pm.Echo('  URI=' + Json.url)
+//	if(Json.header)
+//	 for(i = 0; i < Json.header.length; i++)
+//		Pm.Echo('  Header ' + i + ': ' +Json.header[i])
+	if(Json.params)
+	 for(i = 0; i < Json.params.length; i++)
+		Pm.Echo('  Param ' + i + ': ' +Json.params[i])
+
+	ip = Json.host
+	if(ip.search('.com')) // reduce to just IP
+	{
+		ip = ip.replace( /[a-z.]/g, '' )
+		ip = ip.replace( /[-]/g, '.' )
+		ip = ip.slice(1)
+	}
+
+	if( ValidateIPaddress(ip) && Reg.localIP != ip && ip != wbIP)
+	{
+		Reg.localIP = ip
+		Pm.Echo('New IP: ' + Reg.localIP)
+	}
+}
+
+function ValidateIPaddress(ip) 
+{  
+	return  (/^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(ip))
 }
