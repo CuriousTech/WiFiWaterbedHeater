@@ -118,7 +118,7 @@ String dataJson()
   s += ", \"on\": ";    s += bHeater;
   s += ", \"temp\": ";  s += sDec(roomTemp);
   s += ", \"rh\": ";   s += sDec(rh);
-  s += ", \"tc\": ";   s += String(currCost(), 2);
+  s += ", \"tc\": ";   s += String(currCost(), 3);
   s += "}";
   return s;
 }
@@ -275,78 +275,6 @@ String timeFmt(bool do_sec, bool do_M)
   return r;
 }
 
-void reportReq(AsyncWebServerRequest *request) // report full request to PC
-{
-  String s = "{\"remote\":\"";
-  s += request->client()->remoteIP().toString();
-  s += "\",\"method\":\"";
-  switch(request->method())
-  {
-    case HTTP_GET: s += "GET"; break;
-    case HTTP_POST: s += "POST"; break;
-    case HTTP_DELETE: s += "DELETE"; break;
-    case HTTP_PUT: s += "PUT"; break;
-    case HTTP_PATCH: s += "PATCH"; break;
-    case HTTP_HEAD: s += "HEAD"; break;
-    case HTTP_OPTIONS: s += "OPTIONS"; break;
-    default: s += "<unknown>"; break;
-  }
-  s += "\",\"host\":\"";
-  s += request->host();
-  s += "\",\"url\":\"";
-  s += request->url();
-  s += "\"";
-  if(request->contentLength()){
-    s +=",\"contentType\":\"";
-    s += request->contentType().c_str();
-    s += "\",\"contentLen\":";
-    s += request->contentLength();
-  }
-
-  int headers = request->headers();
-  int i;
-  if(headers)
-  {
-    s += ",\"header\":[";
-    for(i = 0; i < headers; i++){
-      AsyncWebHeader* h = request->getHeader(i);
-      if(i) s += ",";
-      s +="\"";
-      s += h->name().c_str();
-      s += "=";
-      s += h->value().c_str();
-      s += "\"";
-    }
-    s += "]";
-  }
-  int params = request->params();
-  if(params)
-  {
-    s += ",\"params\":[";
-    for(i = 0; i < params; i++)
-    {
-      AsyncWebParameter* p = request->getParam(i);
-      if(i) s += ",";
-      s += "\"";
-      if(p->isFile()){
-        s += "FILE";
-      } else if(p->isPost()){
-        s += "POST";
-      } else {
-        s += "GET";
-      }
-      s += ",";
-      s += p->name().c_str();
-      s += "=";
-      s += p->value().c_str();
-      s += "\"";
-    }
-    s += "]";
-  }
-  s +="}";
-  events.send(s.c_str(), "request");
-}
-
 void handleS(AsyncWebServerRequest *request) { // standard params, but no page
   Serial.println("handleS\n");
   parseParams(request);
@@ -357,7 +285,6 @@ void handleS(AsyncWebServerRequest *request) { // standard params, but no page
   page += serverPort;
   page += "\"}";
   request->send ( 200, "text/json", page );
-  reportReq(request);
 }
 
 void onEvents(AsyncEventSourceClient *client)
@@ -556,16 +483,18 @@ void setup()
   Serial.println();
 
   WiFi.hostname(hostName);
-  wifi.autoConnect(hostName); // Tries config AP, then starts softAP mode for config
+  wifi.autoConnect(hostName, controlPassword); // Tries config AP, then starts softAP mode for config
   if(wifi.isCfg() == false)
+  {
+    if ( !MDNS.begin ( hostName, WiFi.localIP() ) )
+      Serial.println ( "MDNS responder failed" );
+  }
+  else
   {
     Serial.println("");
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
-  
-    if ( !MDNS.begin ( hostName, WiFi.localIP() ) )
-      Serial.println ( "MDNS responder failed" );
   }
 
   MDNS.addService("http", "tcp", serverPort);
@@ -582,20 +511,20 @@ void setup()
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
 
-  server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request) // Main webpage interface
+  server.on ( "/", HTTP_GET, [](AsyncWebServerRequest *request)
   {
-    parseParams(request);
     if(wifi.isCfg())
       request->send( 200, "text/html", wifi.page() ); // WIFI config page
-    else
-    {
+  });
+
+  server.on ( "/iot", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request) // Main webpage interface
+  {
+    parseParams(request);
     #ifdef USE_SPIFFS
       request->send(SPIFFS, "/index.htm");
     #else
       request->send_P(200, "text/html", page1);
     #endif
-    }
-    reportReq(request);
   });
   server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
   server.on ( "/set", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -606,11 +535,36 @@ void setup()
   });
 
   server.onNotFound([](AsyncWebServerRequest *request){ // be silent
-    reportReq(request); // report requests to the PC over event source
 //    request->send(404);
   });
   server.on("/heap", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(200, "text/plain", String(ESP.getFreeHeap()));
+  });
+  server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "[";
+    int n = WiFi.scanComplete();
+    if(n == -2){
+      WiFi.scanNetworks(true);
+    } else if(n){
+      for (int i = 0; i < n; ++i){
+        if(i) json += ",";
+        json += "{";
+        json += "\"rssi\":"+String(WiFi.RSSI(i));
+        json += ",\"ssid\":\""+WiFi.SSID(i)+"\"";
+        json += ",\"bssid\":\""+WiFi.BSSIDstr(i)+"\"";
+        json += ",\"channel\":"+String(WiFi.channel(i));
+        json += ",\"secure\":"+String(WiFi.encryptionType(i));
+        json += ",\"hidden\":"+String(WiFi.isHidden(i)?"true":"false");
+        json += "}";
+      }
+      WiFi.scanDelete();
+      if(WiFi.scanComplete() == -2){
+        WiFi.scanNetworks(true);
+      }
+    }
+    json += "]";
+    request->send(200, "text/json", json);
+    json = String();
   });
 
   server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
