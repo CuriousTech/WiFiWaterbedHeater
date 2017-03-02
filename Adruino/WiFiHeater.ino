@@ -21,6 +21,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+//uncomment to enable Arduino IDE Over The Air update code
+#define OTA_ENABLE
+
 //#define USE_SPIFFS
 
 #include <Wire.h>
@@ -29,6 +32,10 @@ SOFTWARE.
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
 #include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
+#ifdef OTA_ENABLE
+#include <FS.h>
+#include <ArduinoOTA.h>
+#endif
 #ifdef USE_SPIFFS
 #include <FS.h>
 #include <SPIFFSEditor.h>
@@ -103,7 +110,7 @@ const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep
 float currCost()
 {
   float fCurTotalCost = fTotalCost;
-  if(onCounter) fCurTotalCost += (float)(onCounter * watts * ee.ppkwh) / 36000000000; // add current cycle
+  if(onCounter) fCurTotalCost += (float)onCounter * (float)watts  / 10000.0 * (float)ee.ppkwh / 3600000.0; // add current cycle
   return fCurTotalCost;
 }
 
@@ -484,20 +491,15 @@ void setup()
 
   WiFi.hostname(hostName);
   wifi.autoConnect(hostName, controlPassword); // Tries config AP, then starts softAP mode for config
-  if(wifi.isCfg() == false)
+  if(!wifi.isCfg() == false)
   {
     if ( !MDNS.begin ( hostName, WiFi.localIP() ) )
       Serial.println ( "MDNS responder failed" );
-  }
-  else
-  {
     Serial.println("");
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
   }
-
-  MDNS.addService("http", "tcp", serverPort);
 
 #ifdef USE_SPIFFS
   SPIFFS.begin();
@@ -573,6 +575,11 @@ void setup()
   });
   server.begin();
 
+  MDNS.addService("http", "tcp", serverPort);
+#ifdef OTA_ENABLE
+  ArduinoOTA.begin();
+#endif
+
   jsonParse.addList(jsonListCmd);
 
   if( ds.search(ds_addr) )
@@ -591,10 +598,11 @@ void setup()
   {
     Serial.println("No OneWire devices");
   }
+
   if(wifi.isCfg() == false)
     utime.start();
 
-  Tone(TONE, 2600, 200);
+  Tone(2600, 200);
   dht.setup(EXPAN1, DHT::DHT22);
 }
 
@@ -602,12 +610,15 @@ uint16_t ssCnt = ee.rate ? ee.rate : 60;
 
 void loop()
 {
-  static RunningMedian<uint16_t,12> tempMedian;
-  static RunningMedian<uint16_t,12> rhMedian;
+  static RunningMedian<uint16_t,24> tempMedian;
+  static RunningMedian<uint16_t,24> rhMedian;
   static uint8_t hour_save, min_save, sec_save, mon_save;
   static bool bLastOn;
 
   MDNS.update();
+#ifdef OTA_ENABLE
+  ArduinoOTA.handle();
+#endif
 
   checkButtons();
   if(!wifi.isCfg())
@@ -616,7 +627,7 @@ void loop()
 
   if(bTone)
   {
-    Tone(TONE, toneFreq, tonePeriod);
+    Tone(toneFreq, tonePeriod);
     bTone = false;
   }
   
@@ -632,15 +643,23 @@ void loop()
       rhMedian.add((uint16_t)(dht.getHumidity()*10));
       if(dht.getStatus() == DHT::ERROR_NONE)
       {
-        rhMedian.getMedian(rh);
+        float t;
+        rhMedian.getAverage(2, t);
+        rh = t;
         tempMedian.add((uint16_t)(dht.toFahrenheit(dht.getTemperature()) * 10));
-        tempMedian.getMedian(roomTemp);
+        tempMedian.getAverage(2, t);
+        roomTemp = t;
       }
     }
 
+    static int ka = 10;
     if(--ssCnt == 0)
     {
        sendState();
+       ka = 10;
+    }else if(--ka == 0)
+    {
+      events.send("","");
     }
 
     if(min_save != minute()) // only do stuff once per minute
@@ -674,7 +693,7 @@ void loop()
     {
       if(bLastOn)
       {                       // seconds * (price_per_KWH / 10000) / secs_per_hour * watts
-        fTotalCost += (float)(onCounter * watts * ee.ppkwh) / 36000000000;
+        fTotalCost += (float)onCounter * (float)watts / 10000.0 * (float)ee.ppkwh / 3600000.0;
       }
       bLastOn = bHeater;
       onCounter = 0;
@@ -689,12 +708,6 @@ void loop()
 
   // draw the screen here
   display.clear();
-
-  if( (millis() - last) > 400) // 400ms toggle for blinker
-  {
-    last = millis();
-    blnk = !blnk;
-  }
 
   if(ee.bEnableOLED || displayOnTimer) // draw only ON indicator if screen off
   {
@@ -734,12 +747,24 @@ void loop()
     display.drawPropString(2, 33, temp );
     temp = sDec(ee.schedule[schInd].setTemp) + "]";
     display.drawPropString(70, 33, temp );
-    if(bHeater && blnk)
-      display.drawString(1, 55, "Heat");
+    if(bHeater)
+    {
+      if( (millis() - last) > 400) // 400ms toggle for blinker
+      {
+        last = millis();
+        blnk = !blnk;
+      }
+      if(blnk)
+        display.drawString(1, 55, "Heat");
+    }
   }
-  else if(bHeater)  // small blinky dot when display is off
+  else if(bHeater)  // small strobe dot when display is off
   {
-    if(blnk) display.drawString( 2, 56, ".");
+    if(second() != last)
+    {
+      display.drawString( 60, 30, ".");
+      last = second();
+    }
   }
   display.display();
 }
@@ -782,7 +807,7 @@ void Scroller(String s)
 // Check temp to turn heater on and off
 void checkTemp()
 {
-  static RunningMedian<uint16_t,16> tempMedian;
+  static RunningMedian<uint16_t,32> tempMedian;
   static uint8_t state = 0;
 
   switch(state)
@@ -835,8 +860,9 @@ void checkTemp()
 // tempMedian.add(( raw * 625) / 1000 );  // to 10x celcius
   tempMedian.add( (raw * 1125) / 1000 + 320) ; // 10x fahrenheit
 
-  uint16_t newTemp;
-  tempMedian.getMedian(newTemp);
+  float t;
+  tempMedian.getAverage(2, t);
+  uint16_t newTemp = t;
 
   static uint16_t oldHT;
   if(newTemp != currentTemp || hiTemp != oldHT)
@@ -1014,10 +1040,10 @@ int tween(int t1, int t2, int m, int range)
   return t + t1;
 }
 
-void Tone(uint8_t _pin, unsigned int frequency, unsigned long duration)
+void Tone(unsigned int frequency, unsigned long duration)
 {
   analogWriteFreq(frequency);
-  analogWrite(_pin, 500);
+  analogWrite(TONE, 500);
   delay(duration);
-  analogWrite(_pin,0);
+  analogWrite(TONE,0);
 }
