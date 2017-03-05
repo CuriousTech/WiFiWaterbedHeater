@@ -21,8 +21,7 @@ oledon=0
 avg=1
 cnt=1
 function openSocket(){
-//ws=new WebSocket("ws://"+window.location.host+"/ws")
-ws=new WebSocket("ws://192.168.0.104:82/ws")
+ws=new WebSocket("ws://"+window.location.host+"/ws")
 ws.onopen=function(evt) { }
 ws.onclose=function(evt) { alert("Connection closed."); }
 ws.onmessage=function(evt) {
