@@ -15,6 +15,7 @@ background-clip: padding-box;
 }
 body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}
 </style>
+<script type="text/javascript" src="data"></script>
 <script type="text/javascript">
 a=document.all
 oledon=0
@@ -101,7 +102,6 @@ a.vo.value=(a.vo.value=='OFF')?'ON ':'OFF'
 function setCnt(n){
 cnt+=n
 setVar('cnt',cnt)
-draw()
 }
 function setPPK(){
 setVar('ppkwh',(a.K.value*10000).toFixed())
@@ -112,7 +112,6 @@ tm=document.getElementById('S'+n).value
 tp=document.getElementById('T'+n).value
 th=document.getElementById('H'+n).value
 ws.send('cmd;{"key":"'+a.myKey.value+'","N'+n+'":"'+name+'","S'+n+'":"'+tm+'","T'+n+'":"'+tp+'","H'+n+'":"'+th+'"}')
-draw()
 }
 
 var x,y,llh=0,llh2=0
@@ -133,14 +132,14 @@ try {
 
   ctx.font = "bold 11px sans-serif"
 
-  ctx.fillStyle = "#111"
+  ctx.fillStyle = "#111" // temps
   step=c2.width/cnt
+  y = c2.height
+  ctx.fillText(12, c2.width/2, y)//hrs
+  ctx.fillText(6, c2.width/4, y)
+  ctx.fillText(18, c2.width/2+c2.width/4, y)
 
-  ctx.fillText(12, c2.width/2, 10)//hrs
-  ctx.fillText(6, c2.width/4, 10)
-  ctx.fillText(18, c2.width/2+c2.width/4, 10)
-
-  ctx.strokeStyle = "#111"
+  ctx.strokeStyle = "#000"
   if(avg)
   {
 	ctx.beginPath()
@@ -165,30 +164,56 @@ try {
 	x=0
   	linePos(th1) // thresh at midnight
 	ctx.closePath()
-	ctx.stroke()
+	ctx.fillStyle = "#666"
+	ctx.fill()
   }
   else
   {
 	for(i=0;i<cnt;i++)
 	{
-		x = s2x(d.item[i][1])
+		x=s2x(d.item[i][1])
 		y=t2y(d.item[i][2]) // temp
 		y2=t2y(d.item[i][2]-d.item[i][3])-y // thresh
 		if(i==cnt-1) x2=c2.width-x
 		else x2=s2x(d.item[i+1][1])-x
+		ctx.fillStyle = "#666"
 		ctx.fillRect(x, y, x2, y2)
+		ctx.fillStyle = "#000"
 		ctx.fillText(d.item[i][2], x, y-2)
 	}
 	x0 = s2x(d.item[0][1])
+	ctx.fillStyle = "#666"
 	ctx.fillRect(0, y, x0, y2) // rollover midnight
   }
-  x = s2x((new Date()).toTimeString())
+  x = s2x((new Date()).toTimeString()) // now
   ctx.beginPath()
-  ctx.moveTo(x, t2y(waterTemp)) // current time (red)
-  ctx.lineTo(x, c2.height)
-  ctx.strokeStyle = "#F11"
+  y = t2y(waterTemp)
+  ctx.moveTo(x,y)
+  ctx.lineTo(x-4,y+6)
+  ctx.lineTo(x+4,y+6)
+  ctx.closePath()
+  ctx.fillStyle="#0f0"
+  ctx.fill()
   ctx.stroke()
-} catch(err) {}
+
+  ctx.beginPath()
+  for(i=0;i<tdata.length;i++) // hist data
+  {
+	x=s2x(tdata[i].tm)
+	y=t2y(tdata[i].t)
+	if(i==0) ctx.moveTo(x,y)
+	else ctx.lineTo(x,y)
+	ctx.stroke()
+	ctx.beginPath()
+	ctx.moveTo(x,y)
+	switch(tdata[i].s)
+	{
+		case 0: ctx.strokeStyle = "#00F";break
+		case 1: ctx.strokeStyle = "#F00";break
+		case 2: ctx.strokeStyle = "#000";break
+	}
+  }
+}catch(err){}
 }
 function linePos(t)
 {
@@ -228,15 +253,15 @@ Count <input id='dec' type='button' onclick="{setCnt(-1)}"}></td>
 <td colspan=2>Temp <input type='button' value='Up' onclick="{setTemp(1)}"><br/>
 Adjust <input type='button' value='Dn' onclick="{setTemp(-1)}"></td></tr>
 <tr><td align="left">Name</td><td align="left">Time</td><td align="left">Temp</td><td width="99px" align="left">Threshold</td></tr>
-<tr><td colspan=4 id='r0' style="display:none"><input id=N0 type=text size=5>  <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2> <input value="Set" type='button' onclick="{setEntry(0)}"></td></tr>
-<tr><td colspan=4 id='r1' style="display:none"><input id=N1 type=text size=5>  <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2> <input value="Set" type='button' onclick="{setEntry(1)}"></td></tr>
-<tr><td colspan=4 id='r2' style="display:none"><input id=N2 type=text size=5>  <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2> <input value="Set" type='button' onclick="{setEntry(2)}"></td></tr>
-<tr><td colspan=4 id='r3' style="display:none"><input id=N3 type=text size=5>  <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2> <input value="Set" type='button' onclick="{setEntry(3)}"></td></tr>
-<tr><td colspan=4 id='r4' style="display:none"><input id=N4 type=text size=5>  <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2> <input value="Set" type='button' onclick="{setEntry(4)}"></td></tr>
-<tr><td colspan=4 id='r5' style="display:none"><input id=N5 type=text size=5>  <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2> <input value="Set" type='button' onclick="{setEntry(5)}"></td></tr>
-<tr><td colspan=4 id='r6' style="display:none"><input id=N6 type=text size=5>  <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2> <input value="Set" type='button' onclick="{setEntry(6)}"></td></tr>
-<tr><td colspan=4 id='r7' style="display:none"><input id=N7 type=text size=5>  <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2> <input value="Set" type='button' onclick="{setEntry(7)}"></td></tr>
-<tr><td colspan=4><canvas id="canva" width="300" height="100" style="border:1px dotted;float:left" onclick="draw()"></canvas></td></tr>
+<tr><td colspan=4 id='r0' style="display:none"><input id=N0 type=text size=6> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2> <input value="Set" type='button' onclick="{setEntry(0)}"></td></tr>
+<tr><td colspan=4 id='r1' style="display:none"><input id=N1 type=text size=6> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2> <input value="Set" type='button' onclick="{setEntry(1)}"></td></tr>
+<tr><td colspan=4 id='r2' style="display:none"><input id=N2 type=text size=6> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2> <input value="Set" type='button' onclick="{setEntry(2)}"></td></tr>
+<tr><td colspan=4 id='r3' style="display:none"><input id=N3 type=text size=6> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2> <input value="Set" type='button' onclick="{setEntry(3)}"></td></tr>
+<tr><td colspan=4 id='r4' style="display:none"><input id=N4 type=text size=6> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2> <input value="Set" type='button' onclick="{setEntry(4)}"></td></tr>
+<tr><td colspan=4 id='r5' style="display:none"><input id=N5 type=text size=6> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2> <input value="Set" type='button' onclick="{setEntry(5)}"></td></tr>
+<tr><td colspan=4 id='r6' style="display:none"><input id=N6 type=text size=6> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2> <input value="Set" type='button' onclick="{setEntry(6)}"></td></tr>
+<tr><td colspan=4 id='r7' style="display:none"><input id=N7 type=text size=6> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2> <input value="Set" type='button' onclick="{setEntry(7)}"></td></tr>
+<tr><td colspan=4><canvas id="canva" width="288" height="100" style="border:1px dotted;float:left" onclick="draw()"></canvas></td></tr>
 <tr height=32><td id='tc2'></td><td id='m'></td><td><div id='tc'>$0.00</div></td><td>$<input id='K' type=text size=2 value='0.1457'><input value="Set" type='button' onclick="{setPPK()}"></td></tr>
 <tr><td colspan=2></td><td colspan=2><input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 90px"><input type="button" value="Save" onClick="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
 </table>
