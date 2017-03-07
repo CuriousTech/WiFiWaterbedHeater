@@ -44,7 +44,7 @@ SOFTWARE.
 #endif
 #include <OneWire.h>
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
-#include <UdpTime.h>
+#include <UdpTime.h> // https://github.com/CuriousTech/ESP07_WiFiGarageDoor/tree/master/libraries/UdpTime
 #include <DHT.h>  // http://www.github.com/markruys/arduino-DHT
 #include "eeMem.h"
 #include "RunningMedian.h"
@@ -100,6 +100,16 @@ float fLastTotalCost;
 int toneFreq;
 int tonePeriod;
 bool bTone;
+
+struct tempArr{
+  uint8_t h;
+  uint8_t m;
+  uint16_t temp;
+  uint8_t state;
+  uint8_t res;
+};
+#define LOG_CNT 80
+tempArr tempArray[LOG_CNT];
 
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonParse jsonParse(jsonCallback);
@@ -426,6 +436,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           bTone = true;
           break;
       }
+      if(iName) ws.printfAll("set;%s", setJson().c_str()); // update the page settings
       break;
   }
 }
@@ -568,6 +579,20 @@ void setup()
     request->send(200, "text/json", json);
     json = String();
   });
+  server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "tdata=[\n";
+    for (int i = 0; i < 128 && tempArray[i].temp; ++i){
+      if(i) json += ",\n";
+      json += "{";
+      json += "\"tm\":\"" + String(tempArray[i].h) + ":" + String(tempArray[i].m) + "\"";
+      json += ",\"t\":\"" + sDec(tempArray[i].temp) + "\"";
+      json += ",\"s\":" + String(tempArray[i].state);
+      json += "}";
+    }
+    json += "]";
+    request->send(200, "text/json", json);
+    json = String();
+  });
 
   server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
   });
@@ -577,6 +602,7 @@ void setup()
 
   MDNS.addService("http", "tcp", serverPort);
 #ifdef OTA_ENABLE
+  ArduinoOTA.setHostname(hostName);
   ArduinoOTA.begin();
 #endif
 
@@ -679,7 +705,10 @@ void loop()
           fLastTotalCost = fTotalCost; // shift the cost at the end of the month
           fTotalCost = 0;
         }
+        addLog(hour()==0?true:false);
       }
+      if(min_save == 30)
+        addLog(false); // half hour log
     }
     if(displayOnTimer)
     {
@@ -769,6 +798,32 @@ void loop()
   display.display();
 }
 
+void addLog(bool bReset)
+{
+  static int iPos = 0, iEnd = 0;
+
+  if(bReset)
+  {
+    tempArray[iPos].h = 24; //fill in to 24:00
+    tempArray[iPos].m = 0;
+    tempArray[iPos].temp = currentTemp;
+    tempArray[iPos].state = bHeater;
+    iEnd = iPos+1; // end of yesterday
+    tempArray[iEnd].temp = 0; // new end of list
+    iPos = 0; // reset to new day
+  }
+  tempArray[iPos].h = hour();
+  tempArray[iPos].m = minute();
+  tempArray[iPos].temp = currentTemp;
+  tempArray[iPos].state = bHeater;
+  if(iPos < LOG_CNT-1)
+  {
+    iPos++;
+    tempArray[iPos].state = 2; // overlap marker
+  }
+  if(iEnd < iPos) iEnd = iPos;
+}
+
 // Text scroller optimized for very long lines
 void Scroller(String s)
 {
@@ -845,15 +900,14 @@ void checkTemp()
   {
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
-    Serial.println("Invalid CRC");
+    events.send("Invalid CRC", "alert");
     return;
   }
 
   uint16_t raw = (data[1] << 8) | data[0];
 
   if(raw > 630 || raw < 200){ // first reading is always 1360 (0x550)
-    Serial.print("DS err ");
-    Serial.println(raw);
+    events.send("DS err ", "alert");
     return;
   }
 
@@ -877,12 +931,14 @@ void checkTemp()
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
     sendState();
+    addLog(false);
   }
   else if(currentTemp >= hiTemp && bHeater == true)
   {
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
     sendState();
+    addLog(false);
   }
 }
 
