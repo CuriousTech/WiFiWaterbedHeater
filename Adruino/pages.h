@@ -200,6 +200,7 @@ const char page1[] PROGMEM =
    "  ctx.beginPath()\n"
    "  for(i=0;i<tdata.length;i++) // hist data\n"
    "  {\n"
+   "if(tdata[i].t==0) continue;\n"
    "x=s2x(tdata[i].tm)\n"
    "y=t2y(tdata[i].t)\n"
    "if(i==0) ctx.moveTo(x,y)\n"
