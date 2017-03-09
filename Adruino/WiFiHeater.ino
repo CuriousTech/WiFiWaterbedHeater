@@ -108,7 +108,7 @@ struct tempArr{
   uint8_t state;
   uint8_t res;
 };
-#define LOG_CNT 80
+#define LOG_CNT 98
 tempArr tempArray[LOG_CNT];
 
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
@@ -436,7 +436,6 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           bTone = true;
           break;
       }
-      if(iName) ws.printfAll("set;%s", setJson().c_str()); // update the page settings
       break;
   }
 }
@@ -475,6 +474,7 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
           if(pCmd == NULL || pData == NULL) break;
           bKeyGood = false; // for callback (all commands need a key)
           jsonParse.process(pCmd, pData);
+          ws.printfAll("set;%s", setJson().c_str()); // update the page settings
         }
       }
       break;
@@ -581,7 +581,7 @@ void setup()
   });
   server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "tdata=[\n";
-    for (int i = 0; i < 128 && tempArray[i].temp; ++i){
+    for (int i = 0; i <= 96; ++i){
       if(i) json += ",\n";
       json += "{";
       json += "\"tm\":\"" + String(tempArray[i].h) + ":" + String(tempArray[i].m) + "\"";
@@ -686,6 +686,7 @@ void loop()
     }else if(--ka == 0)
     {
       events.send("","");
+      ka = 10;
     }
 
     if(min_save != minute()) // only do stuff once per minute
@@ -705,10 +706,10 @@ void loop()
           fLastTotalCost = fTotalCost; // shift the cost at the end of the month
           fTotalCost = 0;
         }
-        addLog(hour()==0?true:false);
+        addLog();
       }
       if(min_save == 30)
-        addLog(false); // half hour log
+        addLog(); // half hour log
     }
     if(displayOnTimer)
     {
@@ -798,30 +799,36 @@ void loop()
   display.display();
 }
 
-void addLog(bool bReset)
+void addLog()
 {
-  static int iPos = 0, iEnd = 0;
-
-  if(bReset)
+  int iPos = hour() << 2; //+ ( minute() / 15); // 4 per hour
+  if( minute() ) // force 1 and 3 slots
   {
-    tempArray[iPos].h = 24; //fill in to 24:00
-    tempArray[iPos].m = 0;
-    tempArray[iPos].temp = currentTemp;
-    tempArray[iPos].state = bHeater;
-    iEnd = iPos+1; // end of yesterday
-    tempArray[iEnd].temp = 0; // new end of list
-    iPos = 0; // reset to new day
+    if(minute() < 30)
+      iPos ++;
+    else if(minute() == 30)
+      iPos += 2;
+    else
+      iPos += 3;
+  }
+  if(iPos == 0) //fill in to 24:00
+  {
+    tempArray[96].h = 24;
+    tempArray[96].m = 0;
+    tempArray[96].temp = currentTemp;
+    tempArray[96].state = bHeater;
   }
   tempArray[iPos].h = hour();
   tempArray[iPos].m = minute();
   tempArray[iPos].temp = currentTemp;
   tempArray[iPos].state = bHeater;
-  if(iPos < LOG_CNT-1)
-  {
-    iPos++;
-    tempArray[iPos].state = 2; // overlap marker
-  }
-  if(iEnd < iPos) iEnd = iPos;
+
+  if(iPos)
+    if(tempArray[iPos-1].state == 2)
+      tempArray[iPos-1].state = 0;
+
+  tempArray[iPos+1].temp = 0;
+  tempArray[iPos+1].state = 2;  // use 2 as a break between old and new
 }
 
 // Text scroller optimized for very long lines
@@ -931,14 +938,14 @@ void checkTemp()
     bHeater = true;
     digitalWrite(HEAT, !bHeater);
     sendState();
-    addLog(false);
+    addLog();
   }
   else if(currentTemp >= hiTemp && bHeater == true)
   {
     bHeater = false;
     digitalWrite(HEAT, !bHeater);
     sendState();
-    addLog(false);
+    addLog();
   }
 }
 
