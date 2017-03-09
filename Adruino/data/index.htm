@@ -199,6 +199,7 @@ try {
   ctx.beginPath()
   for(i=0;i<tdata.length;i++) // hist data
   {
+	if(tdata[i].t==0) continue;
 	x=s2x(tdata[i].tm)
 	y=t2y(tdata[i].t)
 	if(i==0) ctx.moveTo(x,y)
