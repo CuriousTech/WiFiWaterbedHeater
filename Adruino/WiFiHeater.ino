@@ -582,6 +582,13 @@ void setup()
   server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "tdata=[\n";
     for (int i = 0; i <= 96; ++i){
+      if(tempArray[i].state == 2)
+      {
+        tempArray[i].h = hour();
+        tempArray[i].m = minute();
+        tempArray[i].temp = currentTemp;
+      }
+      
       if(i) json += ",\n";
       json += "{";
       json += "\"tm\":\"" + String(tempArray[i].h) + ":" + String(tempArray[i].m) + "\"";
@@ -638,7 +645,7 @@ void loop()
 {
   static RunningMedian<uint16_t,24> tempMedian;
   static RunningMedian<uint16_t,24> rhMedian;
-  static uint8_t hour_save, min_save, sec_save, mon_save;
+  static uint8_t min_save, sec_save, mon_save;
   static bool bLastOn;
 
   MDNS.update();
@@ -692,11 +699,11 @@ void loop()
     if(min_save != minute()) // only do stuff once per minute
     {
       min_save = minute();
-      checkSched(false);        // check every minute for next schedule
-      if (hour_save != hour()) // update our IP and time daily (at 2AM for DST)
+      checkSched(false);     // check every minute for next schedule
+      if( min_save == 0)     // update our IP and time daily (at 2AM for DST)
       {
-        eemem.update(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
-        if( (hour_save = hour()) == 2)
+        eemem.update();      // update EEPROM if needed while we're at it (give user time to make many adjustments)
+        if( hour() == 2)
         {
           utime.start();
         }
@@ -813,6 +820,8 @@ void addLog()
   }
   if(iPos == 0) //fill in to 24:00
   {
+    if(tempArray[95].state == 2)
+      memset(&tempArray[95], 0, sizeof(tempArr));
     tempArray[96].h = 24;
     tempArray[96].m = 0;
     tempArray[96].temp = currentTemp;
@@ -825,9 +834,9 @@ void addLog()
 
   if(iPos)
     if(tempArray[iPos-1].state == 2)
-      tempArray[iPos-1].state = 0;
+      memset(&tempArray[iPos-1], 0, sizeof(tempArr));
 
-  tempArray[iPos+1].temp = 0;
+  tempArray[iPos+1].temp = currentTemp;
   tempArray[iPos+1].state = 2;  // use 2 as a break between old and new
 }
 
