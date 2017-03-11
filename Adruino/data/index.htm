@@ -202,16 +202,15 @@ try {
 	if(tdata[i].t==0) continue;
 	x=s2x(tdata[i].tm)
 	y=t2y(tdata[i].t)
-	if(i==0) ctx.moveTo(x,y)
-	else ctx.lineTo(x,y)
+	ctx.lineTo(x,y)
 	ctx.stroke()
 	ctx.beginPath()
 	ctx.moveTo(x,y)
 	switch(tdata[i].s)
 	{
-		case 0: ctx.strokeStyle = "#00F";break
-		case 1: ctx.strokeStyle = "#F00";break
-		case 2: ctx.strokeStyle = "#000";break
+		case 0: ctx.strokeStyle="#00F";break
+		case 1: ctx.strokeStyle="#F00";break
+		case 2: ctx.beginPath();break
 	}
   }
 }catch(err){}
