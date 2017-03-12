@@ -119,26 +119,20 @@ function draw(){
 try {
   c2 = document.getElementById('canva')
   ctx = c2.getContext("2d")
-  ctx.fillStyle = "#66F"
-  ctx.fillRect(0,0,c2.width,c2.height)//bg
-  ctx.strokeStyle = "#666"
-  step = c2.width/24
-  ctx.beginPath()
-  for (x = step; x < c2.width; x += step) {  // vertical lines
-    ctx.moveTo(x, 0)
-    ctx.lineTo(x, c2.height)
-  }
-  ctx.stroke()
+  ctx.fillStyle = "#88F" // bg
+  ctx.fillRect(0,0,c2.width,c2.height)
 
   ctx.font = "bold 11px sans-serif"
 
-  ctx.fillStyle = "#111" // temps
+  ctx.fillStyle = "#000" // temps
   step=c2.width/cnt
   y = c2.height
   ctx.fillText(12, c2.width/2, y)//hrs
   ctx.fillText(6, c2.width/4, y)
   ctx.fillText(18, c2.width/2+c2.width/4, y)
-
+  getLoHi()
+  ctx.fillText(hi, 0, 10)
+  ctx.fillText(lo, 0, c2.height)
   ctx.strokeStyle = "#000"
   if(avg)
   {
@@ -164,7 +158,7 @@ try {
 	x=0
   	linePos(th1) // thresh at midnight
 	ctx.closePath()
-	ctx.fillStyle = "#666"
+	ctx.fillStyle = "#888" // thresholds
 	ctx.fill()
   }
   else
@@ -176,15 +170,25 @@ try {
 		y2=t2y(d.item[i][2]-d.item[i][3])-y // thresh
 		if(i==cnt-1) x2=c2.width-x
 		else x2=s2x(d.item[i+1][1])-x
-		ctx.fillStyle = "#666"
+		ctx.fillStyle = "#888" // thresh
 		ctx.fillRect(x, y, x2, y2)
-		ctx.fillStyle = "#000"
+		ctx.fillStyle = "#000" // temp
 		ctx.fillText(d.item[i][2], x, y-2)
 	}
 	x0 = s2x(d.item[0][1])
 	ctx.fillStyle = "#666"
 	ctx.fillRect(0, y, x0, y2) // rollover midnight
   }
+
+  ctx.strokeStyle = "#66F" // v-lines
+  step = c2.width/24
+  ctx.beginPath()
+  for (x = step; x < c2.width; x += step) {  // vertical lines
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, c2.height)
+  }
+  ctx.stroke()
+
   x = s2x((new Date()).toTimeString()) // now
   ctx.beginPath()
   y = t2y(waterTemp)
@@ -192,7 +196,7 @@ try {
   ctx.lineTo(x-4,y+6)
   ctx.lineTo(x+4,y+6)
   ctx.closePath()
-  ctx.fillStyle="#0f0"
+  ctx.fillStyle="#0f0" // arrow
   ctx.fill()
   ctx.stroke()
 
@@ -208,8 +212,8 @@ try {
 	ctx.moveTo(x,y)
 	switch(tdata[i].s)
 	{
-		case 0: ctx.strokeStyle="#00F";break
-		case 1: ctx.strokeStyle="#F00";break
+		case 0: ctx.strokeStyle="#00F";break //off
+		case 1: ctx.strokeStyle="#F00";break //on
 		case 2: ctx.beginPath();break
 	}
   }
@@ -217,22 +221,38 @@ try {
 }
 function linePos(t)
 {
-  ctx.lineTo(x,t2y(t))
+	ctx.lineTo(x,t2y(t))
 }
 function s2x(s)
 {
-  tm = s.split(':')
-  return (tm[0]*60 + (+tm[1]))*c2.width/1440
+	tm = s.split(':')
+	return (tm[0]*60 + (+tm[1]))*c2.width/1440
 }
 function t2y(t)
 {
-  return c2.height-((t-70)/20*c2.height)
+	return c2.height-((t-lo)/(hi-lo)*c2.height)
 }
 function tween(t1, t2, m, r)
 {
 	t=(t2-t1)*(m*100/r)/100
 	t+=t1
 	return t.toFixed(1)
+}
+function getLoHi()
+{
+  lo=90
+  hi=80
+  for(i=0;i<cnt;i++){
+	if(d.item[i][2]>hi) hi=d.item[i][2]
+	if(d.item[i][2]-d.item[i][3]<lo) lo=d.item[i][2]-d.item[i][3]
+  }
+  for(i=0;i<tdata.length;i++)
+  {
+	if(tdata[i].t>hi) hi=tdata[i].t
+	if(tdata[i].t>0&&tdata[i].t<lo) lo=tdata[i].t
+  }
+  lo=Math.floor(lo)
+  hi=Math.ceil(hi)
 }
 </script>
 </head>
