@@ -22,7 +22,7 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
   },
   1457, // ppkwh
   60, // rate
-  0,
+  {0}, // cost months
   0,
 };
 
