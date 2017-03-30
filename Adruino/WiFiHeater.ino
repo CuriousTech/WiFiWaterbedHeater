@@ -95,7 +95,6 @@ String sMessage;
 uint8_t msgCnt;
 uint32_t onCounter;
 float fTotalCost;
-float fLastTotalCost;
 
 int toneFreq;
 int tonePeriod;
@@ -166,11 +165,17 @@ String setJson() // settings
   s += ",\"vo\":";   s += ee.bVaca;
   s += ",\"idx\":";  s += schInd;
   s += ",\"cnt\":";  s += ee.schedCnt;
-  s += ",\"tc2\":\""; s += months[(month()+10)%12]; // last month
-  s += ": $";  s += String(fLastTotalCost, 2);
-  s += "\",\"m\":\""; s += months[month()-1]; // this month
+  s += ",\"m\":\""; s += months[month()-1]; // this month
   s += "\",\"r\":"; s += ee.rate;
-  s += "}";
+  s += ",\"tc\":[";
+  for(int i = 0; i < 12; i++)
+  {
+    if(i) s += ",";
+    s += "\"";
+    s += String((float)ee.costs[i] / 100);
+    s += "\"";
+  }
+  s += "]}";
   return s;
 }
 
@@ -230,8 +235,6 @@ void parseParams(AsyncWebServerRequest *request)
     switch( p->name().charAt(0)  )
     {
       case 'm':  // message
-      Serial.print("Msg: ");
-      Serial.println(s);
         sMessage = s;
         sMessage += " ";
         msgCnt = 4;
@@ -257,6 +260,9 @@ void parseParams(AsyncWebServerRequest *request)
         break;
       case 'p':
         wifi.setPass(s.c_str());
+        break;
+      case 't': // restore the month's total (in cents)
+        fTotalCost = (float)val / 100;
         break;
     }
   }
@@ -580,25 +586,33 @@ void setup()
     json = String();
   });
   server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
-    String json = "tdata=[\n";
+    String json = "tdata=[";
+    bool bSent = false;
     for (int i = 0; i <= 96; ++i){
-      if(tempArray[i].state == 2)
+      if(tempArray[i].state == 2) // now
       {
         tempArray[i].h = hour();
         tempArray[i].m = minute();
         tempArray[i].temp = currentTemp;
       }
-      
-      if(i) json += ",\n";
-      json += "{";
-      json += "\"tm\":\"" + String(tempArray[i].h) + ":" + String(tempArray[i].m) + "\"";
-      json += ",\"t\":\"" + sDec(tempArray[i].temp) + "\"";
-      json += ",\"s\":" + String(tempArray[i].state);
-      json += "}";
+      if(tempArray[i].temp) // only send entries in use (hitting a limit when SSL is compiled in)
+      {
+        if(bSent) json += ",";
+        json += "{";
+        json += "\"tm\":\"" + String(tempArray[i].h) + ":" + String(tempArray[i].m) + "\"";
+        json += ",\"t\":\"" + sDec(tempArray[i].temp) + "\"";
+        json += ",\"s\":" + String(tempArray[i].state);
+        json += "}";
+        bSent = true;
+      }
     }
     json += "]";
     request->send(200, "text/json", json);
     json = String();
+  });
+
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){ // close this one quick
+    request->send(404);
   });
 
   server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
@@ -611,6 +625,9 @@ void setup()
 #ifdef OTA_ENABLE
   ArduinoOTA.setHostname(hostName);
   ArduinoOTA.begin();
+  ArduinoOTA.onStart([]() {
+    eemem.update();
+  });
 #endif
 
   jsonParse.addList(jsonListCmd);
@@ -639,7 +656,7 @@ void setup()
   dht.setup(EXPAN1, DHT::DHT22);
 }
 
-uint16_t ssCnt = ee.rate ? ee.rate : 60;
+uint16_t ssCnt = 30;
 
 void loop()
 {
@@ -702,7 +719,6 @@ void loop()
       checkSched(false);     // check every minute for next schedule
       if( min_save == 0)     // update our IP and time daily (at 2AM for DST)
       {
-        eemem.update();      // update EEPROM if needed while we're at it (give user time to make many adjustments)
         if( hour() == 2)
         {
           utime.start();
@@ -710,10 +726,11 @@ void loop()
         if(mon_save != month())
         {
           mon_save = month();
-          fLastTotalCost = fTotalCost; // shift the cost at the end of the month
+          ee.costs[mon_save-1] = fTotalCost * 100; // shift the cost at the end of the month
           fTotalCost = 0;
         }
         addLog();
+        eemem.update();      // update EEPROM if needed while we're at it (give user time to make many adjustments)
       }
       if(min_save == 30)
         addLog(); // half hour log
