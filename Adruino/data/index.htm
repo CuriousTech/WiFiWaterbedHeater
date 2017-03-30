@@ -17,6 +17,7 @@ body{width:320px;display:block;margin-left:auto;margin-right:auto;text-align:rig
 </style>
 <script type="text/javascript" src="data"></script>
 <script type="text/javascript">
+ms=Array('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec')
 a=document.all
 oledon=0
 avg=1
@@ -64,8 +65,17 @@ ws.onmessage=function(evt) {
   }
   a.inc.value=Math.min(8,cnt+1)
   a.dec.value=Math.max(1,cnt-1)
-  a.tc2.innerHTML=d.tc2
   a.m.innerHTML=d.m+':'
+  for(n=0,i=0;i<4;i++)
+  {
+   s=ms[n]+': $'+d.tc[n]+' &nbsp '
+   n++
+   s+=ms[n]+': $'+d.tc[n]+' &nbsp '
+   n++
+   s+=ms[n]+': $'+d.tc[n]+' &nbsp '
+   n++
+   document.getElementById('tm'+i).innerHTML=s
+  }
   draw()
  }
  else if(event=='alert')
@@ -145,7 +155,6 @@ try {
 	for(i=0;i<cnt;i++){
 		x = s2x(d.item[i][1]) // time to x
 	  	linePos(+d.item[i][2])
-		ctx.fillText(d.item[i][2],x,t2y(+d.item[i][2])-4)
 	}
 	i--;
   	x = c2.width
@@ -160,6 +169,11 @@ try {
 	ctx.closePath()
 	ctx.fillStyle = "#888" // thresholds
 	ctx.fill()
+	ctx.fillStyle = "#000" // temps
+	for(i=0;i<cnt;i++){
+		x = s2x(d.item[i][1]) // time to x
+		ctx.fillText(d.item[i][2],x,t2y(+d.item[i][2])-4)
+	}
   }
   else
   {
@@ -262,28 +276,32 @@ if(key!=null) document.getElementById('myKey').value=key
 openSocket()
 }">
 <h3>WiFi Waterbed Heater</h3>
-<table align="right">
-<tr><td align="center" colspan=2><div id="time"></div></td><td><div id="temp"></div> </td><td align="center"><div id="on"></div></td></tr>
-<tr><td align="center" colspan=2>Bedroom: </td><td><div id="rt"></div></td><td align="left"><div id="rh"></div> </td></tr>
-<tr><td colspan=2>TZ <input id='tz' type=text size=2 value='-5'><input value="Set" type='button' onclick="{setTZ()}"></td><td colspan=2>Display:<input type="button" value="ON " id="OLED" onClick="{oled()}"></td></tr>
-<tr><td colspan=2>Vaca:<input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick="{setVaca()}"></td>
+<table align=right>
+<tr><td align=center><div id="time"></div></td><td><div id="temp"></div> </td><td align="center"><div id="on"></div></td></tr>
+<tr><td align=center>Bedroom: </td><td><div id="rt"></div></td><td align="left"><div id="rh"></div> </td></tr>
+<tr><td>TZ <input id='tz' type=text size=2 value='-5'><input value="Set" type='button' onclick="{setTZ()}"></td><td colspan=2>Display:<input type="button" value="ON " id="OLED" onClick="{oled()}"></td></tr>
+<tr><td>Vaca:<input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick="{setVaca()}"></td>
 <td colspan=2>Average:<input type="button" value="OFF" id="AVG" onClick="{setavg()}"></td></tr>
-<tr><td colspan=2>Schedule <input id='inc' type='button' onclick="{setCnt(1)}"><br/>
+<tr><td>Schedule <input id='inc' type='button' onclick="{setCnt(1)}"><br/>
 Count <input id='dec' type='button' onclick="{setCnt(-1)}"}></td>
 <td colspan=2>Temp <input type='button' value='Up' onclick="{setTemp(1)}"><br/>
 Adjust <input type='button' value='Dn' onclick="{setTemp(-1)}"></td></tr>
-<tr><td align="left">Name</td><td align="left">Time</td><td align="left">Temp</td><td width="99px" align="left">Threshold</td></tr>
-<tr><td colspan=4 id='r0' style="display:none"><input id=N0 type=text size=6> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2> <input value="Set" type='button' onclick="{setEntry(0)}"></td></tr>
-<tr><td colspan=4 id='r1' style="display:none"><input id=N1 type=text size=6> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2> <input value="Set" type='button' onclick="{setEntry(1)}"></td></tr>
-<tr><td colspan=4 id='r2' style="display:none"><input id=N2 type=text size=6> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2> <input value="Set" type='button' onclick="{setEntry(2)}"></td></tr>
-<tr><td colspan=4 id='r3' style="display:none"><input id=N3 type=text size=6> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2> <input value="Set" type='button' onclick="{setEntry(3)}"></td></tr>
-<tr><td colspan=4 id='r4' style="display:none"><input id=N4 type=text size=6> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2> <input value="Set" type='button' onclick="{setEntry(4)}"></td></tr>
-<tr><td colspan=4 id='r5' style="display:none"><input id=N5 type=text size=6> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2> <input value="Set" type='button' onclick="{setEntry(5)}"></td></tr>
-<tr><td colspan=4 id='r6' style="display:none"><input id=N6 type=text size=6> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2> <input value="Set" type='button' onclick="{setEntry(6)}"></td></tr>
-<tr><td colspan=4 id='r7' style="display:none"><input id=N7 type=text size=6> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2> <input value="Set" type='button' onclick="{setEntry(7)}"></td></tr>
-<tr><td colspan=4><canvas id="canva" width="288" height="100" style="border:1px dotted;float:left" onclick="draw()"></canvas></td></tr>
-<tr height=32><td id='tc2'></td><td id='m'></td><td><div id='tc'>$0.00</div></td><td>$<input id='K' type=text size=2 value='0.1457'><input value="Set" type='button' onclick="{setPPK()}"></td></tr>
-<tr><td colspan=2></td><td colspan=2><input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 90px"><input type="button" value="Save" onClick="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
+<tr><td align="left"> &nbsp; Name &nbsp; &nbsp; &nbsp; &nbsp;Time</td><td>Temp</td><td align="left">&nbsp; &nbsp; Threshold</td></tr>
+<tr><td colspan=3 id='r0' style="display:none"><input id=N0 type=text size=6> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2> <input value="Set" type='button' onclick="{setEntry(0)}"></td></tr>
+<tr><td colspan=3 id='r1' style="display:none"><input id=N1 type=text size=6> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2> <input value="Set" type='button' onclick="{setEntry(1)}"></td></tr>
+<tr><td colspan=3 id='r2' style="display:none"><input id=N2 type=text size=6> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2> <input value="Set" type='button' onclick="{setEntry(2)}"></td></tr>
+<tr><td colspan=3 id='r3' style="display:none"><input id=N3 type=text size=6> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2> <input value="Set" type='button' onclick="{setEntry(3)}"></td></tr>
+<tr><td colspan=3 id='r4' style="display:none"><input id=N4 type=text size=6> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2> <input value="Set" type='button' onclick="{setEntry(4)}"></td></tr>
+<tr><td colspan=3 id='r5' style="display:none"><input id=N5 type=text size=6> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2> <input value="Set" type='button' onclick="{setEntry(5)}"></td></tr>
+<tr><td colspan=3 id='r6' style="display:none"><input id=N6 type=text size=6> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2> <input value="Set" type='button' onclick="{setEntry(6)}"></td></tr>
+<tr><td colspan=3 id='r7' style="display:none"><input id=N7 type=text size=6> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2> <input value="Set" type='button' onclick="{setEntry(7)}"></td></tr>
+<tr><td colspan=3><canvas id="canva" width="288" height="100" style="border:1px dotted;float:left" onclick="draw()"></canvas></td></tr>
+<tr height=32><td id='m'></td><td><div id='tc'>$0.00</div></td><td>$<input id='K' type=text size=2 value='0.1457'><input value="Set" type='button' onclick="{setPPK()}"></td></tr>
+<tr><td colspan=3 id='tm0'></td></tr>
+<tr><td colspan=3 id='tm1'></td></tr>
+<tr><td colspan=3 id='tm2'></td></tr>
+<tr><td colspan=3 id='tm3'></td></tr>
+<tr><td></td><td colspan=2><input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 100px"><input type="button" value="Save" onClick="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
 </table>
 </body>
 </html>
