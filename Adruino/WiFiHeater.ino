@@ -725,8 +725,8 @@ void loop()
         }
         if(mon_save != month())
         {
-          mon_save = month();
           ee.costs[mon_save-1] = fTotalCost * 100; // shift the cost at the end of the month
+          mon_save = month();
           fTotalCost = 0;
         }
         addLog();
