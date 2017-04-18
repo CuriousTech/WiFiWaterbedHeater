@@ -37,7 +37,7 @@ ws.onmessage=function(evt) {
   a.time.innerHTML=dt.toLocaleTimeString()
   waterTemp=d.waterTemp.toFixed(1)
   a.temp.innerHTML=waterTemp+'&degF'
-  a.on.innerHTML=">"+d.hiTemp.toFixed(1)+"&degF "+(d.on?"<font color='red'><b>ON</b></font>":"OFF")
+  a.on.innerHTML="<small>>"+d.hiTemp.toFixed(1)+"&degF "+(d.on?"<font color='red'><b>ON</b></font>":"OFF")+'</small>'
   a.rt.innerHTML=d.temp.toFixed(1)+'&degF'
   a.rh.innerHTML=d.rh.toFixed(1)+'%'
   a.tc.innerHTML='$'+d.tc.toFixed(2)
@@ -55,17 +55,17 @@ ws.onmessage=function(evt) {
   a.vo.value=d.vo?'ON ':'OFF'
   cnt=d.cnt
   idx=d.idx
+  itms=d.item
   for(i=0;i<8;i++){
    item=document.getElementById('r'+i); item.setAttribute('style',i<cnt?'':'display:none')
    if(i==idx) item.setAttribute('style','background-color:red')
-   document.getElementById('N'+i).value=d.item[i][0]
-   document.getElementById('S'+i).value=d.item[i][1]
-   document.getElementById('T'+i).value=d.item[i][2]
-   document.getElementById('H'+i).value=d.item[i][3]
+   document.getElementById('N'+i).value=itms[i][0]
+   document.getElementById('S'+i).value=itms[i][1]
+   document.getElementById('T'+i).value=itms[i][2]
+   document.getElementById('H'+i).value=itms[i][3]
   }
   a.inc.value=Math.min(8,cnt+1)
   a.dec.value=Math.max(1,cnt-1)
-  a.m.innerHTML=d.m+':'
   for(n=0,i=0;i<4;i++)
   {
    s=ms[n]+': $'+d.tc[n]+' &nbsp '
@@ -76,6 +76,8 @@ ws.onmessage=function(evt) {
    n++
    document.getElementById('tm'+i).innerHTML=s
   }
+  dt=new Date()
+  a.m.innerHTML=ms[dt.getMonth()]+' '+dt.getDate()+':'
   draw()
  }
  else if(event=='alert')
@@ -103,6 +105,7 @@ function setTemp(n){
 setVar('tadj',n)
 item=document.getElementById('T'+idx)
 item.value=+item.value+n
+save()
 }
 function setVaca(){
 setVar('vacatemp',a.vt.value)
@@ -116,12 +119,33 @@ setVar('cnt',cnt)
 function setPPK(){
 setVar('ppkwh',(a.K.value*10000).toFixed())
 }
-function setEntry(n){
-name=document.getElementById('N'+n).value
-tm=document.getElementById('S'+n).value
-tp=document.getElementById('T'+n).value
-th=document.getElementById('H'+n).value
-ws.send('cmd;{"key":"'+a.myKey.value+'","N'+n+'":"'+name+'","S'+n+'":"'+tm+'","T'+n+'":"'+tp+'","H'+n+'":"'+th+'"}')
+
+function save()
+{
+  for(i=0;i<8;i++)
+  {
+   sv=false
+   if(itms[i][0]!=document.getElementById('N'+i).value) sv=true
+   if(itms[i][1]!=document.getElementById('S'+i).value) sv=true
+   if(itms[i][2]!=document.getElementById('T'+i).value) sv=true
+   if(itms[i][3]!=document.getElementById('H'+i).value) sv=true
+   if(sv)
+   {
+    itms[i][0]=document.getElementById('N'+i).value
+    itms[i][1]=document.getElementById('S'+i).value
+    itms[i][2]=document.getElementById('T'+i).value
+    itms[i][3]=document.getElementById('H'+i).value
+
+    s='cmd;{"key":"'+a.myKey.value+'","I":'+i
+    s+=',"N":"'+itms[i][0]+'"'
+    s+=',"S":'+itms[i][1]
+    s+=',"T":'+itms[i][2]
+    s+=',"H":'+itms[i][3]
+    s+='}'
+    ws.send(s)
+   }
+  }
+  draw()
 }
 
 var x,y,llh=0,llh2=0
@@ -147,22 +171,22 @@ try {
   if(avg)
   {
 	ctx.beginPath()
-	m=c2.width-s2x(d.item[cnt-1][1])
-	r=m+s2x(d.item[0][1])
-	tt1=tween(+d.item[cnt-1][2],+d.item[0][2],m,r) // get y of midnight
-	th1=tween(+d.item[cnt-1][2]-d.item[cnt-1][3],+d.item[0][2]-d.item[0][3],m,r) // thresh
+	m=c2.width-s2x(itms[cnt-1][1])
+	r=m+s2x(itms[0][1])
+	tt1=tween(+itms[cnt-1][2],+itms[0][2],m,r) // get y of midnight
+	th1=tween(+itms[cnt-1][2]-itms[cnt-1][3],+itms[0][2]-itms[0][3],m,r) // thresh
 	ctx.moveTo(0, t2y(tt1)) //1st point
 	for(i=0;i<cnt;i++){
-		x = s2x(d.item[i][1]) // time to x
-	  	linePos(+d.item[i][2])
+		x = s2x(itms[i][1]) // time to x
+	  	linePos(+itms[i][2])
 	}
 	i--;
   	x = c2.width
   	linePos(tt1) // temp at mid
   	linePos(th1) // thresh tween
 	for(;i>=0;i--){
-		x = s2x(d.item[i][1])
-	  	linePos(d.item[i][2]-d.item[i][3])
+		x = s2x(itms[i][1])
+	  	linePos(itms[i][2]-itms[i][3])
 	}
 	x=0
   	linePos(th1) // thresh at midnight
@@ -171,25 +195,25 @@ try {
 	ctx.fill()
 	ctx.fillStyle = "#000" // temps
 	for(i=0;i<cnt;i++){
-		x = s2x(d.item[i][1]) // time to x
-		ctx.fillText(d.item[i][2],x,t2y(+d.item[i][2])-4)
+		x = s2x(itms[i][1]) // time to x
+		ctx.fillText(itms[i][2],x,t2y(+itms[i][2])-4)
 	}
   }
   else
   {
 	for(i=0;i<cnt;i++)
 	{
-		x=s2x(d.item[i][1])
-		y=t2y(d.item[i][2]) // temp
-		y2=t2y(d.item[i][2]-d.item[i][3])-y // thresh
+		x=s2x(itms[i][1])
+		y=t2y(itms[i][2]) // temp
+		y2=t2y(itms[i][2]-itms[i][3])-y // thresh
 		if(i==cnt-1) x2=c2.width-x
-		else x2=s2x(d.item[i+1][1])-x
+		else x2=s2x(itms[i+1][1])-x
 		ctx.fillStyle = "#888" // thresh
 		ctx.fillRect(x, y, x2, y2)
 		ctx.fillStyle = "#000" // temp
-		ctx.fillText(d.item[i][2], x, y-2)
+		ctx.fillText(itms[i][2], x, y-2)
 	}
-	x0 = s2x(d.item[0][1])
+	x0 = s2x(itms[0][1])
 	ctx.fillStyle = "#666"
 	ctx.fillRect(0, y, x0, y2) // rollover midnight
   }
@@ -257,8 +281,8 @@ function getLoHi()
   lo=90
   hi=80
   for(i=0;i<cnt;i++){
-	if(d.item[i][2]>hi) hi=d.item[i][2]
-	if(d.item[i][2]-d.item[i][3]<lo) lo=d.item[i][2]-d.item[i][3]
+	if(itms[i][2]>hi) hi=itms[i][2]
+	if(itms[i][2]-itms[i][3]<lo) lo=itms[i][2]-itms[i][3]
   }
   for(i=0;i<tdata.length;i++)
   {
@@ -280,28 +304,28 @@ openSocket()
 <tr><td align=center><div id="time"></div></td><td><div id="temp"></div> </td><td align="center"><div id="on"></div></td></tr>
 <tr><td align=center>Bedroom: </td><td><div id="rt"></div></td><td align="left"><div id="rh"></div> </td></tr>
 <tr><td>TZ <input id='tz' type=text size=2 value='-5'><input value="Set" type='button' onclick="{setTZ()}"></td><td colspan=2>Display:<input type="button" value="ON " id="OLED" onClick="{oled()}"></td></tr>
-<tr><td>Vaca:<input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick="{setVaca()}"></td>
+<tr><td>Vaca <input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick="{setVaca()}"></td>
 <td colspan=2>Average:<input type="button" value="OFF" id="AVG" onClick="{setavg()}"></td></tr>
 <tr><td>Schedule <input id='inc' type='button' onclick="{setCnt(1)}"><br/>
 Count <input id='dec' type='button' onclick="{setCnt(-1)}"}></td>
 <td colspan=2>Temp <input type='button' value='Up' onclick="{setTemp(1)}"><br/>
 Adjust <input type='button' value='Dn' onclick="{setTemp(-1)}"></td></tr>
-<tr><td align="left"> &nbsp; Name &nbsp; &nbsp; &nbsp; &nbsp;Time</td><td>Temp</td><td align="left">&nbsp; &nbsp; Threshold</td></tr>
-<tr><td colspan=3 id='r0' style="display:none"><input id=N0 type=text size=6> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2> <input value="Set" type='button' onclick="{setEntry(0)}"></td></tr>
-<tr><td colspan=3 id='r1' style="display:none"><input id=N1 type=text size=6> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2> <input value="Set" type='button' onclick="{setEntry(1)}"></td></tr>
-<tr><td colspan=3 id='r2' style="display:none"><input id=N2 type=text size=6> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2> <input value="Set" type='button' onclick="{setEntry(2)}"></td></tr>
-<tr><td colspan=3 id='r3' style="display:none"><input id=N3 type=text size=6> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2> <input value="Set" type='button' onclick="{setEntry(3)}"></td></tr>
-<tr><td colspan=3 id='r4' style="display:none"><input id=N4 type=text size=6> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2> <input value="Set" type='button' onclick="{setEntry(4)}"></td></tr>
-<tr><td colspan=3 id='r5' style="display:none"><input id=N5 type=text size=6> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2> <input value="Set" type='button' onclick="{setEntry(5)}"></td></tr>
-<tr><td colspan=3 id='r6' style="display:none"><input id=N6 type=text size=6> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2> <input value="Set" type='button' onclick="{setEntry(6)}"></td></tr>
-<tr><td colspan=3 id='r7' style="display:none"><input id=N7 type=text size=6> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2> <input value="Set" type='button' onclick="{setEntry(7)}"></td></tr>
-<tr><td colspan=3><canvas id="canva" width="288" height="100" style="border:1px dotted;float:left" onclick="draw()"></canvas></td></tr>
-<tr height=32><td id='m'></td><td><div id='tc'>$0.00</div></td><td>$<input id='K' type=text size=2 value='0.1457'><input value="Set" type='button' onclick="{setPPK()}"></td></tr>
+<tr><td align="left"> &nbsp; &nbsp;  &nbsp; Name</td><td>Time &nbsp;&nbsp;</td><td>Temp &nbsp;Thresh</td></tr>
+<tr><td colspan=3 id='r0' style="display:none"><input id=N0 type=text size=8> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2></td></tr>
+<tr><td colspan=3 id='r1' style="display:none"><input id=N1 type=text size=8> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2></td></tr>
+<tr><td colspan=3 id='r2' style="display:none"><input id=N2 type=text size=8> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2></td></tr>
+<tr><td colspan=3 id='r3' style="display:none"><input id=N3 type=text size=8> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2></td></tr>
+<tr><td colspan=3 id='r4' style="display:none"><input id=N4 type=text size=8> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2></td></tr>
+<tr><td colspan=3 id='r5' style="display:none"><input id=N5 type=text size=8> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2></td></tr>
+<tr><td colspan=3 id='r6' style="display:none"><input id=N6 type=text size=8> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2></td></tr>
+<tr><td colspan=3 id='r7' style="display:none"><input id=N7 type=text size=8> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2></td></tr>
+<tr><td colspan=3><canvas id="canva" width="280" height="100" style="border:1px dotted;float:left" onclick="draw()"></canvas></td></tr>
+<tr height=32><td><div id='m'></div></td><td><div id='tc'>$0.00</div></td><td>$<input id='K' type=text size=2 value='0.1457'><input value="Set" type='button' onclick="{setPPK()}"></td></tr>
 <tr><td colspan=3 id='tm0'></td></tr>
 <tr><td colspan=3 id='tm1'></td></tr>
 <tr><td colspan=3 id='tm2'></td></tr>
 <tr><td colspan=3 id='tm3'></td></tr>
-<tr><td></td><td colspan=2><input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 100px"><input type="button" value="Save" onClick="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
+<tr><td align="left"><input value="Save Changes" type='button' onclick="save();"></td><td colspan=2><input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 100px"><input type="button" value="Save" onClick="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
 </table>
 </body>
 </html>
