@@ -165,8 +165,7 @@ String setJson() // settings
   s += ",\"vo\":";   s += ee.bVaca;
   s += ",\"idx\":";  s += schInd;
   s += ",\"cnt\":";  s += ee.schedCnt;
-  s += ",\"m\":\""; s += months[month()-1]; // this month
-  s += "\",\"r\":"; s += ee.rate;
+  s += ",\"r\":"; s += ee.rate;
   s += ",\"tc\":[";
   for(int i = 0; i < 12; i++)
   {
@@ -325,19 +324,20 @@ void onEvents(AsyncEventSourceClient *client)
 const char *jsonListCmd[] = { "cmd",
   "key",
   "oled",
-  "TZ", // location
+  "TZ",
   "avg",
   "cnt",
-  "tadj",
+  "tadj", // 5
   "ppkwh",
   "vaca",
   "vacatemp",
-  "N0",  "N1",  "N2",  "N3",  "N4",  "N5",  "N6",  "N7",
-  "S0",  "S1",  "S2",  "S3",  "S4",  "S5",  "S6",  "S7",
-  "T0",  "T1",  "T2",  "T3",  "T4",  "T5",  "T6",  "T7",
-  "H0",  "H1",  "H2",  "H3",  "H4",  "H5",  "H6",  "H7",
+  "I",
+  "N", // 10
+  "S",
+  "T",
+  "H",
   "beepF",
-  "beepP",
+  "beepP", // 15
   NULL
 };
 
@@ -348,6 +348,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
   if(!bKeyGood && iName) return; // only allow for key
   char *p, *p2;
   static int beepPer = 1000;
+  static int item = 0;
 
   switch(iEvent)
   {
@@ -385,59 +386,34 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
         case 8: // vacatemp
           ee.vacaTemp = constrain( (int)(atof(psValue)*10), 400, 800); // 40-80F
           break;
-        case 9: // N0
-        case 10:
-        case 11:
-        case 12:
-        case 13:
-        case 14:
-        case 15:
-        case 16:
-          strncpy(ee.schedule[iName-9].name, psValue, sizeof(ee.schedule[0].name) );
+        case 9: // I
+          item = iValue;
           break;
-        case 17: // S0
-        case 18:
-        case 19:
-        case 20:
-        case 21:
-        case 22:
-        case 23:
-        case 24:
+        case 10: // N
+          strncpy(ee.schedule[item].name, psValue, sizeof(ee.schedule[0].name) );
+          break;
+        case 11: // S
           p = strtok(psValue, ":");
           p2 = strtok(NULL, "");
           if(p && p2){
             iValue *= 60;
             iValue += atoi(p2);
           }
-          ee.schedule[iName-17].timeSch = iValue;
+          ee.schedule[item].timeSch = iValue;
           break;
-        case 25: // T0
-        case 26:
-        case 27:
-        case 28:
-        case 29:
-        case 30:
-        case 31:
-        case 32:
-          ee.schedule[iName-25].setTemp = atof(psValue)*10;
+        case 12: // T
+          ee.schedule[item].setTemp = atof(psValue)*10;
           break;
-        case 33: // H0
-        case 34:
-        case 35:
-        case 36:
-        case 37:
-        case 38:
-        case 39:
-        case 40:
-          ee.schedule[iName-33].thresh = (int)(atof(psValue)*10);
+        case 13: // H
+          ee.schedule[item].thresh = (int)(atof(psValue)*10);
           checkLimits();      // constrain and check new values
           checkSched(true);   // reconfigure to new schedule
           break;
-       case 41: // beepF
+       case 14: // beepF
           bTone = true;
           toneFreq = iValue;
           break;
-       case 42: // beepP (beep period)
+       case 15: // beepP (beep period)
           tonePeriod = iValue;
           bTone = true;
           break;
