@@ -371,7 +371,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           break;
         case 4: // cnt
           ee.schedCnt = constrain(iValue, 1, 8);
-          ws.printfAll("set;%s", setJson().c_str()); // update all the entries
+          ws.textAll(String("set;") + setJson()); // update all the entries
           break;
         case 5: // tadj
           ee.schedule[schInd].setTemp += iValue*10;
@@ -432,7 +432,7 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
       if(bRestarted)
       {
         bRestarted = false;
-        client->printf("alert;restarted");
+        client->printf("alert;Restarted");
       }
       client->printf("state;%s", dataJson().c_str());
       client->printf("set;%s", setJson().c_str());
@@ -456,7 +456,7 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
           if(pCmd == NULL || pData == NULL) break;
           bKeyGood = false; // for callback (all commands need a key)
           jsonParse.process(pCmd, pData);
-          ws.printfAll("set;%s", setJson().c_str()); // update the page settings
+          ws.textAll(String("set;") + setJson()); // update the page settings
         }
       }
       break;
@@ -954,7 +954,7 @@ void checkTemp()
 void sendState()
 {
   events.send(dataJson().c_str(), "state");
-  ws.printfAll("state;%s", dataJson().c_str());
+  ws.textAll(String("state;") + dataJson() );
   ssCnt = ee.rate;
 }
 
