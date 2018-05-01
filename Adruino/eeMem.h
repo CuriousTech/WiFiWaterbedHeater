@@ -12,6 +12,15 @@ struct Sched
   char    name[16]; // names for small display
 };
 
+struct Alarm
+{
+  uint16_t ms;  // 0 = inactive
+  uint16_t freq;
+  uint16_t timeSch;
+  uint8_t wday;  // Todo: weekday 0=any, bits 0-6 = day of week
+  char    name[16]; // names for small display
+};
+
 #define MAX_SCHED 8
 
 struct eeSet // EEPROM backed data
@@ -31,10 +40,9 @@ struct eeSet // EEPROM backed data
   uint16_t ppkwh;
   uint16_t rate;
   uint16_t costs[12];
-  uint32_t res[2];
+  Alarm   alarm[MAX_SCHED];
+  uint16_t tAdj[2];
 };
-
-extern eeSet ee;
 
 class eeMem
 {
@@ -46,5 +54,5 @@ private:
 };
 
 extern eeMem eemem;
-
+extern eeSet ee;
 #endif // EEMEM_H
