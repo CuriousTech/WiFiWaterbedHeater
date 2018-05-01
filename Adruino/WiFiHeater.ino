@@ -54,8 +54,8 @@ const char controlPassword[] = "password";    // device password for modifying a
 const int serverPort = 82;                    // HTTP port
 const int watts = 290;                        // standard waterbed heater wattage (300) or measured watts
 
-#define EXPAN1    0  // side expansion pad
-#define EXPAN2    2  // side expansion pad
+#define DHTPIN    0  // side expansion pad
+#define VIBE      2  // side expansion pad
 #define ESP_LED   2  //Blue LED on ESP07 (on low)
 #define SDA       4
 #define SCL       5  // OLED
@@ -96,16 +96,20 @@ uint8_t msgCnt;
 uint32_t onCounter;
 float fTotalCost;
 
-int toneFreq;
-int tonePeriod;
-bool bTone;
+int toneFreq = 1000;
+int tonePeriod = 100;
+int toneCnt;
+
+int vibePeriod = 200;
+int vibeCnt;
 
 struct tempArr{
   uint8_t h;
   uint8_t m;
   uint16_t temp;
   uint8_t state;
-  uint8_t res;
+  uint16_t rm;
+  uint16_t rh;
 };
 #define LOG_CNT 98
 tempArr tempArray[LOG_CNT];
@@ -178,6 +182,11 @@ String setJson() // settings
   return s;
 }
 
+void ePrint(const char *s)
+{
+  ws.textAll(String("print;") + s);
+}
+
 void parseParams(AsyncWebServerRequest *request)
 {
   static char temp[256];
@@ -245,14 +254,29 @@ void parseParams(AsyncWebServerRequest *request)
       case 'r': // rate
         if(val == 0) val = 1; // don't allow 0
         ee.rate = val;
+        sendState();
         break;
-      case 'f': // frequency
-        toneFreq = val;
-        bTone = true;
+      case 'a':
+        ESP.reset();
         break;
-      case 'b': // beep : ?f=1200&b=1000
-        tonePeriod = val;
-        bTone = true;
+      case 'b': // beep : /s?key=pass&b=1000,800,3 (tone or ms,tone,cnt)
+        toneCnt = 1;
+        {
+          int n = s.indexOf(",");
+          if(n >0)
+          {
+            tonePeriod = constrain(val, 10, 1000);
+            s.remove(0, n+1);
+            val = s.toInt();
+          }
+          toneFreq = val;
+          n = s.indexOf(",");
+          if(n >0)
+          {
+            s.remove(0, n+1);
+            toneCnt = constrain(s.toInt(), 1, 20);
+          }
+        }
         break;
       case 's':
         s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
@@ -260,8 +284,24 @@ void parseParams(AsyncWebServerRequest *request)
       case 'p':
         wifi.setPass(s.c_str());
         break;
-      case 't': // restore the month's total (in cents)
+      case 'c': // restore the month's total (in cents) after updates
         fTotalCost = (float)val / 100;
+        break;
+      case 'v': // vibe
+        {
+          int n = s.indexOf(",");
+          if(n >0)
+          {
+            s.remove(0, n+1);
+            vibeCnt = s.toInt();
+          }
+        }
+        vibePeriod = val;
+        pinMode(VIBE, OUTPUT);
+        digitalWrite(VIBE, LOW);
+        break;
+      case 't': // tadj[1] (for room temp)
+        ee.tAdj[1] = constrain(val, -200, 200);
         break;
     }
   }
@@ -338,6 +378,7 @@ const char *jsonListCmd[] = { "cmd",
   "H",
   "beepF",
   "beepP", // 15
+  "vibe",
   NULL
 };
 
@@ -410,12 +451,18 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           checkSched(true);   // reconfigure to new schedule
           break;
        case 14: // beepF
-          bTone = true;
+          toneCnt = 1;
           toneFreq = iValue;
           break;
        case 15: // beepP (beep period)
           tonePeriod = iValue;
-          bTone = true;
+          toneCnt = 1;
+          break;
+       case 16: // vibe (vibe period)
+          vibePeriod = iValue;
+          vibeCnt = 1;
+          pinMode(VIBE, OUTPUT);
+          digitalWrite(VIBE, LOW);
           break;
       }
       break;
@@ -425,6 +472,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len)
 {  //Handle WebSocket event
   static bool bRestarted = true;
+  String s;
 
   switch(type)
   {
@@ -432,10 +480,12 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
       if(bRestarted)
       {
         bRestarted = false;
-        client->printf("alert;Restarted");
+        client->text("alert;Restarted");
       }
-      client->printf("state;%s", dataJson().c_str());
-      client->printf("set;%s", setJson().c_str());
+      s = String("state;") + dataJson().c_str();
+      client->text(s);
+      s = String("set;") + setJson().c_str();
+      client->text(s);
       client->ping();
       break;
     case WS_EVT_DISCONNECT:    //client disconnected
@@ -475,11 +525,12 @@ void setup()
   digitalWrite(HEAT, HIGH); // high is off
 
   // initialize dispaly
+  delay(100);
   display.init();
   display.flipScreenVertically();
 
   Serial.begin(115200);
-//  delay(3000);
+  delay(100);
   Serial.println();
 
   WiFi.hostname(hostName);
@@ -518,7 +569,7 @@ void setup()
     #ifdef USE_SPIFFS
       request->send(SPIFFS, "/index.htm");
     #else
-      request->send_P(200, "text/html", page1);
+      request->send_P(200, "text/html", index_page);
     #endif
   });
   server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
@@ -570,6 +621,8 @@ void setup()
         tempArray[i].h = hour();
         tempArray[i].m = minute();
         tempArray[i].temp = currentTemp;
+        tempArray[i].rm = roomTemp;
+        tempArray[i].rh = rh;
       }
       if(tempArray[i].temp) // only send entries in use (hitting a limit when SSL is compiled in)
       {
@@ -578,6 +631,8 @@ void setup()
         json += "\"tm\":\"" + String(tempArray[i].h) + ":" + String(tempArray[i].m) + "\"";
         json += ",\"t\":\"" + sDec(tempArray[i].temp) + "\"";
         json += ",\"s\":" + String(tempArray[i].state);
+        json += ",\"rm\":\"" + sDec(tempArray[i].rm) + "\"";
+        json += ",\"rh\":\"" + sDec(tempArray[i].rh) + "\"";
         json += "}";
         bSent = true;
       }
@@ -587,8 +642,10 @@ void setup()
     json = String();
   });
 
-  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){ // close this one quick
-    request->send(404);
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
+    AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon, sizeof(favicon));
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
   });
 
   server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
@@ -597,7 +654,6 @@ void setup()
   });
   server.begin();
 
-  MDNS.addService("http", "tcp", serverPort);
 #ifdef OTA_ENABLE
   ArduinoOTA.setHostname(hostName);
   ArduinoOTA.begin();
@@ -626,10 +682,13 @@ void setup()
   }
 
   if(wifi.isCfg() == false)
+  {
     utime.start();
+    MDNS.addService("http", "tcp", serverPort);
+  }
 
   Tone(2600, 200);
-  dht.setup(EXPAN1, DHT::DHT22);
+  dht.setup(DHTPIN, DHT::DHT22);
 }
 
 uint16_t ssCnt = 30;
@@ -651,12 +710,25 @@ void loop()
     if(utime.check(ee.tz))
       checkSched(true);  // initialize
 
-  if(bTone)
+  if(toneCnt)
   {
     Tone(toneFreq, tonePeriod);
-    bTone = false;
+    if(--toneCnt)
+      delay(tonePeriod);
   }
-  
+
+  if(vibeCnt)
+  {
+    delay(vibePeriod);
+    pinMode(VIBE, INPUT);
+    digitalWrite(VIBE, HIGH);
+    if(--vibeCnt)
+    {
+      pinMode(VIBE, OUTPUT);
+      digitalWrite(VIBE, LOW);
+    }
+  }
+
   if(sec_save != second()) // only do stuff once per second
   {
     sec_save = second();
@@ -672,7 +744,7 @@ void loop()
         float t;
         rhMedian.getAverage(2, t);
         rh = t;
-        tempMedian.add((uint16_t)(dht.toFahrenheit(dht.getTemperature()) * 10));
+        tempMedian.add((uint16_t)(ee.tAdj[1] + (dht.toFahrenheit(dht.getTemperature()) * 10)));
         tempMedian.getAverage(2, t);
         roomTemp = t;
       }
@@ -819,11 +891,15 @@ void addLog()
     tempArray[96].m = 0;
     tempArray[96].temp = currentTemp;
     tempArray[96].state = bHeater;
+    tempArray[96].rm = roomTemp;
+    tempArray[96].rh = rh;
   }
   tempArray[iPos].h = hour();
   tempArray[iPos].m = minute();
   tempArray[iPos].temp = currentTemp;
   tempArray[iPos].state = bHeater;
+  tempArray[iPos].rm = roomTemp;
+  tempArray[iPos].rh = rh;
 
   if(iPos)
     if(tempArray[iPos-1].state == 2)
