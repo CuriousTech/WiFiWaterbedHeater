@@ -1,4 +1,4 @@
-const char page1[] PROGMEM =
+const char index_page[] PROGMEM =
    "<!DOCTYPE html><html lang=\"en\">\n"
    "<head>\n"
    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n"
@@ -223,7 +223,7 @@ const char page1[] PROGMEM =
    "  ctx.fillText(hi,0,10)\n"
    "  ctx.fillText(lo,0,c2.height)\n"
    "  hl=hi-lo\n"
-   "  ctx.strokeStyle = \"#484\" // h-lines\n"
+   "  ctx.strokeStyle = \"rgba(13,13,13,0.5)\" // h-lines\n"
    "  step = c2.height/hl\n"
    "  ctx.beginPath()\n"
    "  for(y = step,n=hi-1;y<c2.height;y+= step){  // vertical lines\n"
@@ -232,7 +232,6 @@ const char page1[] PROGMEM =
    "ctx.fillText(n--,0,y+3)\n"
    "  }\n"
    "  ctx.stroke()\n"
-   "  ctx.strokeStyle = \"#484\" // v-lines\n"
    "  step = c2.width/24\n"
    "  ctx.beginPath()\n"
    "  for (x = step; x < c2.width; x += step){ // vertical lines\n"
@@ -241,16 +240,31 @@ const char page1[] PROGMEM =
    "  }\n"
    "  ctx.stroke()\n"
    "\n"
-   "  x = s2x((new Date()).toTimeString()) // now\n"
    "  ctx.beginPath()\n"
-   "  y = t2y(waterTemp)\n"
-   "  ctx.moveTo(x,y)\n"
-   "  ctx.lineTo(x-4,y+6)\n"
-   "  ctx.lineTo(x+4,y+6)\n"
-   "  ctx.closePath()\n"
-   "  ctx.fillStyle=\"#0f0\" // arrow\n"
-   "  ctx.fill()\n"
-   "  ctx.stroke()\n"
+   "  ctx.strokeStyle=\"#0D0\"\n"
+   "  for(i=0;i<tdata.length;i++) // rh\n"
+   "  {\n"
+   "if(tdata[i].t==0) continue;\n"
+   "x=s2x(tdata[i].tm)\n"
+   "y=c2.height-(tdata[i].rh/100*c2.height)\n"
+   "ctx.lineTo(x,y)\n"
+   "ctx.stroke()\n"
+   "ctx.beginPath()\n"
+   "ctx.moveTo(x,y)\n"
+   "  }\n"
+   "\n"
+   "  ctx.beginPath()\n"
+   "  ctx.strokeStyle=\"#834\"\n"
+   "  for(i=0;i<tdata.length;i++) // room temp\n"
+   "  {\n"
+   "if(tdata[i].t==0) continue;\n"
+   "x=s2x(tdata[i].tm)\n"
+   "y=t2y(tdata[i].rm)\n"
+   "ctx.lineTo(x,y)\n"
+   "ctx.stroke()\n"
+   "ctx.beginPath()\n"
+   "ctx.moveTo(x,y)\n"
+   "  }\n"
    "\n"
    "  ctx.beginPath()\n"
    "  for(i=0;i<tdata.length;i++) // hist data\n"
@@ -269,6 +283,16 @@ const char page1[] PROGMEM =
    "case 2: ctx.beginPath();break\n"
    "}\n"
    "  }\n"
+   "  x = s2x((new Date()).toTimeString()) // now\n"
+   "  ctx.beginPath()\n"
+   "  y = t2y(waterTemp)\n"
+   "  ctx.moveTo(x,y)\n"
+   "  ctx.lineTo(x-4,y+6)\n"
+   "  ctx.lineTo(x+4,y+6)\n"
+   "  ctx.closePath()\n"
+   "  ctx.fillStyle=\"#0f0\" // arrow\n"
+   "  ctx.fill()\n"
+   "  ctx.stroke()\n"
    "}catch(err){}\n"
    "}\n"
    "function linePos(t)\n"
@@ -292,8 +316,8 @@ const char page1[] PROGMEM =
    "}\n"
    "function getLoHi()\n"
    "{\n"
-   "  lo=90\n"
-   "  hi=80\n"
+   "  lo=99\n"
+   "  hi=60\n"
    "  for(i=0;i<cnt;i++){\n"
    "if(itms[i][2]>hi) hi=itms[i][2]\n"
    "if(itms[i][2]-itms[i][3]<lo) lo=itms[i][2]-itms[i][3]\n"
@@ -301,7 +325,9 @@ const char page1[] PROGMEM =
    "  for(i=0;i<tdata.length;i++)\n"
    "  {\n"
    "if(tdata[i].t>hi) hi=tdata[i].t\n"
+   "if(tdata[i].rm>hi) hi=tdata[i].rm\n"
    "if(tdata[i].t>0&&tdata[i].t<lo) lo=tdata[i].t\n"
+   "if(tdata[i].rm>0&&tdata[i].rm<lo) lo=tdata[i].rm\n"
    "  }\n"
    "  lo=Math.floor(lo)\n"
    "  hi=Math.ceil(hi)\n"
@@ -325,21 +351,53 @@ const char page1[] PROGMEM =
    "<td colspan=2>Temp <input type='button' value='Up' onclick=\"{setTemp(1)}\"><br/>\n"
    "Adjust <input type='button' value='Dn' onclick=\"{setTemp(-1)}\"></td></tr>\n"
    "<tr><td align=\"left\"> &nbsp; &nbsp;  &nbsp; Name</td><td>Time &nbsp;&nbsp;</td><td>Temp &nbsp;Thresh</td></tr>\n"
-   "<tr><td colspan=3 id='r0' style=\"display:none\"><input id=N0 type=text size=8> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r1' style=\"display:none\"><input id=N1 type=text size=8> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r2' style=\"display:none\"><input id=N2 type=text size=8> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r3' style=\"display:none\"><input id=N3 type=text size=8> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r4' style=\"display:none\"><input id=N4 type=text size=8> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r5' style=\"display:none\"><input id=N5 type=text size=8> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r6' style=\"display:none\"><input id=N6 type=text size=8> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r7' style=\"display:none\"><input id=N7 type=text size=8> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3><canvas id=\"canva\" width=\"280\" height=\"100\" style=\"border:1px dotted;float:left\" onclick=\"draw()\"></canvas></td></tr>\n"
+   "<tr><td colspan=3 id='r0' style=\"display:none\"><input id=N0 type=text size=10> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='r1' style=\"display:none\"><input id=N1 type=text size=10> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='r2' style=\"display:none\"><input id=N2 type=text size=10> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='r3' style=\"display:none\"><input id=N3 type=text size=10> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='r4' style=\"display:none\"><input id=N4 type=text size=10> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='r5' style=\"display:none\"><input id=N5 type=text size=10> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='r6' style=\"display:none\"><input id=N6 type=text size=10> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='r7' style=\"display:none\"><input id=N7 type=text size=10> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3><canvas id=\"canva\" width=\"280\" height=\"140\" style=\"border:1px dotted;float:left\" onclick=\"draw()\"></canvas></td></tr>\n"
    "<tr height=32><td><div id='m'></div></td><td><div id='tc'>$0.00</div></td><td>$<input id='K' type=text size=2 value='0.1457'><input value=\"Set\" type='button' onclick=\"{setPPK()}\"></td></tr>\n"
    "<tr><td colspan=3 id='tm0'></td></tr>\n"
    "<tr><td colspan=3 id='tm1'></td></tr>\n"
    "<tr><td colspan=3 id='tm2'></td></tr>\n"
    "<tr><td colspan=3 id='tm3'></td></tr>\n"
+   "<tr><td colspan=3 id='a0' style=\"display:none\"><input id=AN0 type=text size=10> <input id=AS0 type=text size=3> <input id=D0 type=text size=3> <input id=F0 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='a1' style=\"display:none\"><input id=AN1 type=text size=10> <input id=AS1 type=text size=3> <input id=D1 type=text size=3> <input id=F1 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='a2' style=\"display:none\"><input id=AN2 type=text size=10> <input id=AS2 type=text size=3> <input id=D2 type=text size=3> <input id=F2 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='a3' style=\"display:none\"><input id=AN3 type=text size=10> <input id=AS3 type=text size=3> <input id=D3 type=text size=3> <input id=F3 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='a4' style=\"display:none\"><input id=AN4 type=text size=10> <input id=AS4 type=text size=3> <input id=D4 type=text size=3> <input id=F4 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='a5' style=\"display:none\"><input id=AN5 type=text size=10> <input id=AS5 type=text size=3> <input id=D5 type=text size=3> <input id=F5 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='a6' style=\"display:none\"><input id=AN6 type=text size=10> <input id=AS6 type=text size=3> <input id=D6 type=text size=3> <input id=F6 type=text size=2></td></tr>\n"
+   "<tr><td colspan=3 id='a7' style=\"display:none\"><input id=AN7 type=text size=10> <input id=AS7 type=text size=3> <input id=D7 type=text size=3> <input id=F7 type=text size=2></td></tr>\n"
    "<tr><td align=\"left\"><input value=\"Save Changes\" type='button' onclick=\"save();\"></td><td colspan=2><input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 100px\"><input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\"></td></tr>\n"
    "</table>\n"
    "</body>\n"
    "</html>\n";
+
+const uint8_t favicon[] PROGMEM = {
+  0x1F, 0x8B, 0x08, 0x08, 0x70, 0xC9, 0xE2, 0x59, 0x04, 0x00, 0x66, 0x61, 0x76, 0x69, 0x63, 0x6F, 
+  0x6E, 0x2E, 0x69, 0x63, 0x6F, 0x00, 0xD5, 0x94, 0x31, 0x4B, 0xC3, 0x50, 0x14, 0x85, 0x4F, 0x6B, 
+  0xC0, 0x52, 0x0A, 0x86, 0x22, 0x9D, 0xA4, 0x74, 0xC8, 0xE0, 0x28, 0x46, 0xC4, 0x41, 0xB0, 0x53, 
+  0x7F, 0x87, 0x64, 0x72, 0x14, 0x71, 0xD7, 0xB5, 0x38, 0x38, 0xF9, 0x03, 0xFC, 0x05, 0x1D, 0xB3, 
+  0x0A, 0x9D, 0x9D, 0xA4, 0x74, 0x15, 0x44, 0xC4, 0x4D, 0x07, 0x07, 0x89, 0xFA, 0x3C, 0x97, 0x9C, 
+  0xE8, 0x1B, 0xDA, 0x92, 0x16, 0x3A, 0xF4, 0x86, 0x8F, 0x77, 0x73, 0xEF, 0x39, 0xEF, 0xBD, 0xBC, 
+  0x90, 0x00, 0x15, 0x5E, 0x61, 0x68, 0x63, 0x07, 0x27, 0x01, 0xD0, 0x02, 0xB0, 0x4D, 0x58, 0x62, 
+  0x25, 0xAF, 0x5B, 0x74, 0x03, 0xAC, 0x54, 0xC4, 0x71, 0xDC, 0x35, 0xB0, 0x40, 0xD0, 0xD7, 0x24, 
+  0x99, 0x68, 0x62, 0xFE, 0xA8, 0xD2, 0x77, 0x6B, 0x58, 0x8E, 0x92, 0x41, 0xFD, 0x21, 0x79, 0x22, 
+  0x89, 0x7C, 0x55, 0xCB, 0xC9, 0xB3, 0xF5, 0x4A, 0xF8, 0xF7, 0xC9, 0x27, 0x71, 0xE4, 0x55, 0x38, 
+  0xD5, 0x0E, 0x66, 0xF8, 0x22, 0x72, 0x43, 0xDA, 0x64, 0x8F, 0xA4, 0xE4, 0x43, 0xA4, 0xAA, 0xB5, 
+  0xA5, 0x89, 0x26, 0xF8, 0x13, 0x6F, 0xCD, 0x63, 0x96, 0x6A, 0x5E, 0xBB, 0x66, 0x35, 0x6F, 0x2F, 
+  0x89, 0xE7, 0xAB, 0x93, 0x1E, 0xD3, 0x80, 0x63, 0x9F, 0x7C, 0x9B, 0x46, 0xEB, 0xDE, 0x1B, 0xCA, 
+  0x9D, 0x7A, 0x7D, 0x69, 0x7B, 0xF2, 0x9E, 0xAB, 0x37, 0x20, 0x21, 0xD9, 0xB5, 0x33, 0x2F, 0xD6, 
+  0x2A, 0xF6, 0xA4, 0xDA, 0x8E, 0x34, 0x03, 0xAB, 0xCB, 0xBB, 0x45, 0x46, 0xBA, 0x7F, 0x21, 0xA7, 
+  0x64, 0x53, 0x7B, 0x6B, 0x18, 0xCA, 0x5B, 0xE4, 0xCC, 0x9B, 0xF7, 0xC1, 0xBC, 0x85, 0x4E, 0xE7, 
+  0x92, 0x15, 0xFB, 0xD4, 0x9C, 0xA9, 0x18, 0x79, 0xCF, 0x95, 0x49, 0xDB, 0x98, 0xF2, 0x0E, 0xAE, 
+  0xC8, 0xF8, 0x4F, 0xFF, 0x3F, 0xDF, 0x58, 0xBD, 0x08, 0x25, 0x42, 0x67, 0xD3, 0x11, 0x75, 0x2C, 
+  0x29, 0x9C, 0xCB, 0xF9, 0xB9, 0x00, 0xBE, 0x8E, 0xF2, 0xF1, 0xFD, 0x1A, 0x78, 0xDB, 0x00, 0xEE, 
+  0xD6, 0x80, 0xE1, 0x90, 0xFF, 0x90, 0x40, 0x1F, 0x04, 0xBF, 0xC4, 0xCB, 0x0A, 0xF0, 0xB8, 0x6E, 
+  0xDA, 0xDC, 0xF7, 0x0B, 0xE9, 0xA4, 0xB1, 0xC3, 0x7E, 0x04, 0x00, 0x00, 
+};
