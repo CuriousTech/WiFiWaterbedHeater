@@ -1,29 +1,34 @@
 #include "eeMem.h"
 #include <EEPROM.h>
+#undef ee
 
 eeSet ee = { sizeof(eeSet), 0xAAAA,
   "",  // saved SSID
   "", // router password
-  650, -5, // vacaTemp, TZ
-  4,
-  false,                   // active schedules, vacation mode
-  false,                   // average
-  true,                   // OLED
+  640, -5, // vacaTemp, TZ
+  5,       // schedCnt
+  false,  // active schedules, vacation mode
+  true,  // average
+  true,   // OLED
   false,
   {
-    {830,  7*60, 5, 0, "Morning"},  // temp, time, thresh, wday
-    {810, 11*60, 3, 0, "Noon"},
-    {810, 17*60, 3, 0, "Day"},
-    {835, 20*60, 3, 0, "Night"},
-    {830,  0*60, 3, 0, "Sch5"},
+    {840,  3*60, 3, 0, "Midnight"},
+    {820,  6*60, 5, 0, "Early"},  // temp, time, thresh, wday
+    {812,  8*60, 3, 0, "Morning"},
+    {812, 15*60+30, 3, 0, "Day"},
+    {840, 20*60+30, 3, 0, "Night"},
     {830,  0*60, 3, 0, "Sch6"},
     {830,  0*60, 3, 0, "Sch7"},
     {830,  0*60, 3, 0, "Sch8"}
   },
-  1457, // ppkwh
-  60, // rate
+  1450, // ppkwh
+  56, // rate
   {0}, // cost months
-  0,
+  {
+    {0, 1000, 8*60, 0x3E,"Weekday"},
+    {0},
+  }, // alarms
+  {0,0}, // tAdj[2]
 };
 
 eeMem::eeMem()
@@ -54,8 +59,9 @@ void eeMem::update() // write the settings if changed
   ee.sum = Fletcher16((uint8_t*)&ee, sizeof(eeSet));
 
   if(old_sum == ee.sum)
+  {
     return; // Nothing has changed?
-
+  }
   uint16_t addr = 0;
   uint8_t *pData = (uint8_t *)&ee;
   for(int i = 0; i < sizeof(eeSet); i++, addr++)
