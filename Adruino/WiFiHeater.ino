@@ -145,8 +145,18 @@ String dataJson()
 
 String setJson() // settings
 {
-  String s = "{\"item\":[";
-  
+  String s = "{";
+
+  s += "\"vt\":";  s += sDec(ee.vacaTemp);
+  s += ",\"o\":";   s += ee.bEnableOLED;
+  s += ",\"tz\":";  s += ee.tz;
+  s += ",\"avg\":";  s += ee.bAvg;
+  s += ",\"ppkwh\":"; s += ee.ppkwh;
+  s += ",\"vo\":";   s += ee.bVaca;
+  s += ",\"idx\":";  s += schInd;
+  s += ",\"cnt\":";  s += ee.schedCnt;
+  s += ",\"r\":"; s += ee.rate;
+  s += ",\"item\":[";
   for(int i = 0; i < 8; i++)
   {
     if(i) s += ",";
@@ -161,15 +171,6 @@ String setJson() // settings
     s += "]";
   }
   s += "]";
-  s += ",\"vt\":";   s += sDec(ee.vacaTemp);
-  s += ",\"o\":";   s += ee.bEnableOLED;
-  s += ",\"tz\":";  s += ee.tz;
-  s += ",\"avg\":";  s += ee.bAvg;
-  s += ",\"ppkwh\":"; s += ee.ppkwh;
-  s += ",\"vo\":";   s += ee.bVaca;
-  s += ",\"idx\":";  s += schInd;
-  s += ",\"cnt\":";  s += ee.schedCnt;
-  s += ",\"r\":"; s += ee.rate;
   s += ",\"tc\":[";
   for(int i = 0; i < 12; i++)
   {
@@ -252,7 +253,8 @@ void parseParams(AsyncWebServerRequest *request)
         }
         break;
       case 'r': // rate
-        if(val == 0) val = 1; // don't allow 0
+        if(val == 0)
+          break; // don't allow 0
         ee.rate = val;
         sendState();
         break;
@@ -697,14 +699,13 @@ void loop()
 {
   static RunningMedian<uint16_t,24> tempMedian;
   static RunningMedian<uint16_t,24> rhMedian;
-  static uint8_t min_save, sec_save, mon_save;
+  static uint8_t min_save, sec_save, mon_save = 0;
   static bool bLastOn;
 
   MDNS.update();
 #ifdef OTA_ENABLE
   ArduinoOTA.handle();
 #endif
-
   checkButtons();
   if(!wifi.isCfg())
     if(utime.check(ee.tz))
@@ -771,9 +772,10 @@ void loop()
         {
           utime.start();
         }
-        if(mon_save != month())
+        if( mon_save != month() )
         {
-          ee.costs[mon_save-1] = fTotalCost * 100; // shift the cost at the end of the month
+          if(mon_save) // first hour after start hour
+            ee.costs[mon_save-1] = fTotalCost * 100; // shift the cost at the end of the month
           mon_save = month();
           fTotalCost = 0;
         }
@@ -801,6 +803,7 @@ void loop()
       onCounter = 0;
     }
   }
+
   if(wifi.isCfg())
     return;
 
