@@ -22,11 +22,3 @@ LED         0805 (optional)
 Headers     0.1" header, 16 pins.
 
 All 3 bottom connectors are servo cables. +center.  eBay is a good source.
-
-Slave/Supply board:
-
-Supply    RAC02-3.3SC
-SSR       CX240D5
-330uF     6SEQP330M
-IEC       161-0714-7-E
-PPTC      0ZRM0050FF1E
