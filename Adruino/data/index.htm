@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en">
+﻿<!DOCTYPE html><html lang="en">
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>WiFi Waterbed Heater</title>
@@ -24,6 +24,7 @@ avg=1
 cnt=1
 function openSocket(){
 ws=new WebSocket("ws://"+window.location.host+"/ws")
+//ws=new WebSocket("ws://192.168.0.104:82/ws")
 ws.onopen=function(evt) { }
 ws.onclose=function(evt) { alert("Connection closed."); }
 ws.onmessage=function(evt) {
@@ -51,8 +52,10 @@ ws.onmessage=function(evt) {
   avg=d.avg
   a.AVG.value=avg?'ON ':'OFF'
   a.tz.value=d.tz
-  a.K.value=d.ppkwh/10000
+  ppkw=d.ppkwh/10000
+  a.K.value=ppkw
   a.vo.value=d.vo?'ON ':'OFF'
+  watts=a.w
   cnt=d.cnt
   idx=d.idx
   itms=d.item
@@ -76,6 +79,10 @@ ws.onmessage=function(evt) {
    n++
    document.getElementById('tm'+i).innerHTML=s
   }
+  tot=0
+  for(i=0;i<12;i++)
+   tot+=+d.tc[i]
+  a.tot.innerHTML='Year: $'+tot.toFixed(2)+' &nbsp '
   dt=new Date()
   a.m.innerHTML=ms[dt.getMonth()]+' '+dt.getDate()+':'
   draw()
@@ -103,9 +110,6 @@ function setTZ(){
 setVar('TZ',a.tz.value)}
 function setTemp(n){
 setVar('tadj',n)
-item=document.getElementById('T'+idx)
-item.value=+item.value+n
-save()
 }
 function setVaca(){
 setVar('vacatemp',a.vt.value)
@@ -157,17 +161,10 @@ try {
   ctx.fillRect(0,0,c2.width,c2.height)
 
   ctx.font = "bold 11px sans-serif"
-
-  ctx.fillStyle = "#000" // temps
-  step=c2.width/cnt
-  y = c2.height
-  ctx.fillText(12, c2.width/2, y)//hrs
-  ctx.fillText(6, c2.width/4, y)
-  ctx.fillText(18, c2.width/2+c2.width/4, y)
+  ctx.lineWidth = 1
   getLoHi()
-  ctx.fillText(hi, 0, 10)
-  ctx.fillText(lo, 0, c2.height)
   ctx.strokeStyle = "#000"
+  ctx.fillStyle = "#000"
   if(avg)
   {
 	ctx.beginPath()
@@ -191,7 +188,7 @@ try {
 	x=0
   	linePos(th1) // thresh at midnight
 	ctx.closePath()
-	ctx.fillStyle = "#888" // thresholds
+	ctx.fillStyle = "rgba(80,80,80,0.5)" // thresholds
 	ctx.fill()
 	ctx.fillStyle = "#000" // temps
 	for(i=0;i<cnt;i++){
@@ -208,7 +205,7 @@ try {
 		y2=t2y(itms[i][2]-itms[i][3])-y // thresh
 		if(i==cnt-1) x2=c2.width-x
 		else x2=s2x(itms[i+1][1])-x
-		ctx.fillStyle = "#888" // thresh
+		ctx.fillStyle = "rgba(80,80,80,0.5)" // thresh
 		ctx.fillRect(x, y, x2, y2)
 		ctx.fillStyle = "#000" // temp
 		ctx.fillText(itms[i][2], x, y-2)
@@ -218,25 +215,63 @@ try {
 	ctx.fillRect(0, y, x0, y2) // rollover midnight
   }
 
-  ctx.strokeStyle = "#66F" // v-lines
+  ctx.fillStyle = "#000" // temps
+  step=c2.width/cnt
+  y = c2.height
+  ctx.fillText(12,c2.width/2-6, y)//hrs
+  ctx.fillText(6, c2.width/4-3, y)
+  ctx.fillText(18,c2.width/2+c2.width/4-6, y)
+  getLoHi()
+  ctx.fillStyle = "#337" // temp scale
+  ctx.fillText(hi,0,10)
+  ctx.fillText(lo,0,c2.height)
+  hl=hi-lo
+  ctx.strokeStyle = "rgba(13,13,13,0.5)" // h-lines
+  step = c2.height/hl
+  ctx.beginPath()
+  for(y = step,n=hi-1;y<c2.height;y+= step){  // vertical lines
+    ctx.moveTo(14,y)
+    ctx.lineTo(c2.width,y)
+	ctx.fillText(n--,0,y+3)
+  }
+  ctx.stroke()
   step = c2.width/24
   ctx.beginPath()
-  for (x = step; x < c2.width; x += step) {  // vertical lines
-    ctx.moveTo(x, 0)
-    ctx.lineTo(x, c2.height)
+  for (x = step; x < c2.width; x += step){ // vertical lines
+    ctx.moveTo(x,0)
+    ctx.lineTo(x,c2.height)
   }
   ctx.stroke()
 
-  x = s2x((new Date()).toTimeString()) // now
+  nowX = s2x((new Date()).toTimeString()) // now
   ctx.beginPath()
-  y = t2y(waterTemp)
-  ctx.moveTo(x,y)
-  ctx.lineTo(x-4,y+6)
-  ctx.lineTo(x+4,y+6)
-  ctx.closePath()
-  ctx.fillStyle="#0f0" // arrow
-  ctx.fill()
-  ctx.stroke()
+  ctx.strokeStyle="#0D0"
+  brk=false
+  for(i=0;i<tdata.length;i++) // rh
+  {
+	if(tdata[i].t==0) continue
+	x=s2x(tdata[i].tm)
+	y=c2.height-(tdata[i].rh/100*c2.height)
+	ctx.lineTo(x,y)
+	ctx.stroke()
+	ctx.beginPath()
+	if(tdata[i].s!=2)
+		ctx.moveTo(x,y)
+  }
+
+  ctx.beginPath()
+  ctx.strokeStyle="#834"
+  for(i=0;i<tdata.length;i++) // room temp
+  {
+	if(tdata[i].t==0) continue
+	x=s2x(tdata[i].tm)
+	y=t2y(tdata[i].rm)
+	ctx.lineTo(x,y)
+	ctx.stroke()
+	ctx.beginPath()
+	if(tdata[i].s!=2)
+		ctx.moveTo(x,y)
+  }
 
   ctx.beginPath()
   for(i=0;i<tdata.length;i++) // hist data
@@ -247,14 +282,23 @@ try {
 	ctx.lineTo(x,y)
 	ctx.stroke()
 	ctx.beginPath()
-	ctx.moveTo(x,y)
 	switch(tdata[i].s)
 	{
-		case 0: ctx.strokeStyle="#00F";break //off
-		case 1: ctx.strokeStyle="#F00";break //on
-		case 2: ctx.beginPath();break
+		case 0: ctx.strokeStyle="#00F"; ctx.moveTo(x,y); break //off
+		case 1: ctx.strokeStyle="#F00"; ctx.moveTo(x,y); break //on
+		case 2: break
 	}
   }
+  x = s2x((new Date()).toTimeString()) // now
+  ctx.beginPath()
+  y = t2y(waterTemp)
+  ctx.moveTo(x,y)
+  ctx.lineTo(x-4,y+6)
+  ctx.lineTo(x+4,y+6)
+  ctx.closePath()
+  ctx.fillStyle="#0f0" // arrow
+  ctx.fill()
+  ctx.stroke()
 }catch(err){}
 }
 function linePos(t)
@@ -278,8 +322,8 @@ function tween(t1, t2, m, r)
 }
 function getLoHi()
 {
-  lo=90
-  hi=80
+  lo=99
+  hi=60
   for(i=0;i<cnt;i++){
 	if(itms[i][2]>hi) hi=itms[i][2]
 	if(itms[i][2]-itms[i][3]<lo) lo=itms[i][2]-itms[i][3]
@@ -287,7 +331,9 @@ function getLoHi()
   for(i=0;i<tdata.length;i++)
   {
 	if(tdata[i].t>hi) hi=tdata[i].t
+	if(tdata[i].rm>hi) hi=tdata[i].rm
 	if(tdata[i].t>0&&tdata[i].t<lo) lo=tdata[i].t
+	if(tdata[i].rm>0&&tdata[i].rm<lo) lo=tdata[i].rm
   }
   lo=Math.floor(lo)
   hi=Math.ceil(hi)
@@ -311,20 +357,21 @@ Count <input id='dec' type='button' onclick="{setCnt(-1)}"}></td>
 <td colspan=2>Temp <input type='button' value='Up' onclick="{setTemp(1)}"><br/>
 Adjust <input type='button' value='Dn' onclick="{setTemp(-1)}"></td></tr>
 <tr><td align="left"> &nbsp; &nbsp;  &nbsp; Name</td><td>Time &nbsp;&nbsp;</td><td>Temp &nbsp;Thresh</td></tr>
-<tr><td colspan=3 id='r0' style="display:none"><input id=N0 type=text size=8> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2></td></tr>
-<tr><td colspan=3 id='r1' style="display:none"><input id=N1 type=text size=8> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2></td></tr>
-<tr><td colspan=3 id='r2' style="display:none"><input id=N2 type=text size=8> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2></td></tr>
-<tr><td colspan=3 id='r3' style="display:none"><input id=N3 type=text size=8> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2></td></tr>
-<tr><td colspan=3 id='r4' style="display:none"><input id=N4 type=text size=8> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2></td></tr>
-<tr><td colspan=3 id='r5' style="display:none"><input id=N5 type=text size=8> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2></td></tr>
-<tr><td colspan=3 id='r6' style="display:none"><input id=N6 type=text size=8> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2></td></tr>
-<tr><td colspan=3 id='r7' style="display:none"><input id=N7 type=text size=8> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2></td></tr>
-<tr><td colspan=3><canvas id="canva" width="280" height="100" style="border:1px dotted;float:left" onclick="draw()"></canvas></td></tr>
+<tr><td colspan=3 id='r0' style="display:none"><input id=N0 type=text size=10> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2></td></tr>
+<tr><td colspan=3 id='r1' style="display:none"><input id=N1 type=text size=10> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2></td></tr>
+<tr><td colspan=3 id='r2' style="display:none"><input id=N2 type=text size=10> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2></td></tr>
+<tr><td colspan=3 id='r3' style="display:none"><input id=N3 type=text size=10> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2></td></tr>
+<tr><td colspan=3 id='r4' style="display:none"><input id=N4 type=text size=10> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2></td></tr>
+<tr><td colspan=3 id='r5' style="display:none"><input id=N5 type=text size=10> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2></td></tr>
+<tr><td colspan=3 id='r6' style="display:none"><input id=N6 type=text size=10> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2></td></tr>
+<tr><td colspan=3 id='r7' style="display:none"><input id=N7 type=text size=10> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2></td></tr>
+<tr><td colspan=3><canvas id="canva" width="280" height="140" style="border:1px dotted;float:center" onclick="draw()"></canvas></td></tr>
 <tr height=32><td><div id='m'></div></td><td><div id='tc'>$0.00</div></td><td>$<input id='K' type=text size=2 value='0.1457'><input value="Set" type='button' onclick="{setPPK()}"></td></tr>
 <tr><td colspan=3 id='tm0'></td></tr>
 <tr><td colspan=3 id='tm1'></td></tr>
 <tr><td colspan=3 id='tm2'></td></tr>
 <tr><td colspan=3 id='tm3'></td></tr>
+<tr><td colspan=3 id='tot'></td></tr>
 <tr><td align="left"><input value="Save Changes" type='button' onclick="save();"></td><td colspan=2><input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 100px"><input type="button" value="Save" onClick="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
 </table>
 </body>
