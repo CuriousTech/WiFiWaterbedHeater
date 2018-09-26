@@ -1,5 +1,5 @@
 Supply    Mean well IRM-02-3.3
-SSR       IXYS CPC1998J
+Relay     G6RL-1A-DC3
 47uF 4V   ECE-A0GKA470
 IEC       161-0714-7-E
 PPTC      600mA through hole
