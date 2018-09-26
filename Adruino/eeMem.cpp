@@ -7,7 +7,7 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
   "", // router password
   640, -5, // vacaTemp, TZ
   5,       // schedCnt
-  false,  // active schedules, vacation mode
+  false,  // vacation mode
   true,  // average
   true,   // OLED
   false,
@@ -22,18 +22,24 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
     {830,  0*60, 3, 0, "Sch8"}
   },
   1450, // ppkwh
-  56, // rate
+  58, // rate
+  290, // watts (mbr = 290  gbr = 352)
+//  {1138,1273,1285, 1218,666,330, 222,202,475, 863,1170,1081}, // cost months 2018
   {0}, // cost months
+  {0},
+  {0,0}, // tAdj[2]
+  0.0,
+  0.0,
   {
     {0, 1000, 8*60, 0x3E,"Weekday"},
     {0},
   }, // alarms
-  {0,0}, // tAdj[2]
+  {1024,0}, // lightlevel
 };
 
 eeMem::eeMem()
 {
-  EEPROM.begin(512);
+  EEPROM.begin(1024);
 
   uint8_t data[sizeof(eeSet)];
   uint16_t *pwTemp = (uint16_t *)data;
@@ -52,7 +58,7 @@ eeMem::eeMem()
   memcpy(&ee, data, sizeof(eeSet) );
 }
 
-void eeMem::update() // write the settings if changed
+void eeMem::update(float currCost, float currWatts) // write the settings if changed
 {
   uint16_t old_sum = ee.sum;
   ee.sum = 0;
@@ -62,6 +68,9 @@ void eeMem::update() // write the settings if changed
   {
     return; // Nothing has changed?
   }
+  ee.fTotalCost = currCost;
+  ee.fTotalWatts = currWatts;
+
   uint16_t addr = 0;
   uint8_t *pData = (uint8_t *)&ee;
   for(int i = 0; i < sizeof(eeSet); i++, addr++)
