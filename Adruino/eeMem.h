@@ -53,7 +53,8 @@ class eeMem
 {
 public:
   eeMem();
-  void update(float currCost, float currWatts);
+  bool update(bool bForce, float currCost, float currWatts);
+  bool verify(bool bComp);
 private:
   uint16_t Fletcher16( uint8_t* data, int count);
 };
