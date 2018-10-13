@@ -31,7 +31,7 @@ public:
     void autoConnect(char const *apName, const char *pPass);
     String page(void);
     void seconds(void);
-    void setPass(const char *p);
+    void setPass(void);
     bool isCfg(void);
 
     boolean hasConnected();
