@@ -1,11 +1,11 @@
 #include "eeMem.h"
 #include <EEPROM.h>
-#undef ee
 
-eeSet ee = { sizeof(eeSet), 0xAAAA,
+eeSet ee = {
+  sizeof(eeSet), 0xAAAA,
   "",  // saved SSID
   "", // router password
-  640, -5, // vacaTemp, TZ
+  800, -5, // vacaTemp, TZ
   5,       // schedCnt
   false,  // vacation mode
   true,  // average
@@ -21,7 +21,7 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
     {830,  0*60, 3, 0, "Sch7"},
     {830,  0*60, 3, 0, "Sch8"}
   },
-  1450, // ppkwh
+  1450, // ppkwh (0.145)
   58, // rate
   290, // watts (mbr = 290  gbr = 352)
 //  {1138,1273,1285, 1218,666,330, 222,202,475, 863,1170,1081}, // cost months 2018
@@ -40,44 +40,55 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
 eeMem::eeMem()
 {
   EEPROM.begin(1024);
-
-  uint8_t data[sizeof(eeSet)];
-  uint16_t *pwTemp = (uint16_t *)data;
-
-  int addr = 0;
-  for(int i = 0; i < sizeof(eeSet); i++, addr++)
-  {
-    data[i] = EEPROM.read( addr );
-  }
-
-  if(pwTemp[0] != sizeof(eeSet)) return; // revert to defaults if struct size changes
-  uint16_t sum = pwTemp[1];
-  pwTemp[1] = 0;
-  pwTemp[1] = Fletcher16(data, sizeof(eeSet) );
-  if(pwTemp[1] != sum) return; // revert to defaults if sum fails
-  memcpy(&ee, data, sizeof(eeSet) );
+  verify(false);
 }
 
-void eeMem::update(float currCost, float currWatts) // write the settings if changed
+bool eeMem::update(bool bForce, float currCost, float currWatts) // write the settings if changed
 {
   uint16_t old_sum = ee.sum;
   ee.sum = 0;
   ee.sum = Fletcher16((uint8_t*)&ee, sizeof(eeSet));
 
-  if(old_sum == ee.sum)
+  if(bForce == false && old_sum == ee.sum)
   {
-    return; // Nothing has changed?
+    return false; // Nothing has changed?
   }
+
   ee.fTotalCost = currCost;
   ee.fTotalWatts = currWatts;
 
-  uint16_t addr = 0;
+  ee.sum = 0;
+  ee.sum = Fletcher16((uint8_t*)&ee, sizeof(eeSet));
+
   uint8_t *pData = (uint8_t *)&ee;
-  for(int i = 0; i < sizeof(eeSet); i++, addr++)
+  for(int addr = 0; addr < sizeof(eeSet); addr++)
   {
-    EEPROM.write(addr, pData[i] );
+    EEPROM.write(addr, pData[addr] );
   }
   EEPROM.commit();
+  return true;
+}
+
+bool eeMem::verify(bool bComp)
+{
+  uint8_t data[sizeof(eeSet)];
+  uint16_t *pwTemp = (uint16_t *)data;
+
+  for(int addr = 0; addr < sizeof(eeSet); addr++)
+  {
+    data[addr] = EEPROM.read( addr );
+  }
+  if(pwTemp[0] != sizeof(eeSet))
+    return false; // revert to defaults if struct size changes
+  uint16_t sum = pwTemp[1];
+  pwTemp[1] = 0;
+  pwTemp[1] = Fletcher16(data, sizeof(eeSet) );
+  if(pwTemp[1] != sum) return false; // revert to defaults if sum fails
+
+  if(bComp)
+    return ( !memcmp(&ee, data, sizeof(eeSet) ) ); // don't load
+  memcpy(&ee, data, sizeof(eeSet) );
+  return true;
 }
 
 uint16_t eeMem::Fletcher16( uint8_t* data, int count)
@@ -90,6 +101,5 @@ uint16_t eeMem::Fletcher16( uint8_t* data, int count)
       sum1 = (sum1 + data[index]) % 255;
       sum2 = (sum2 + sum1) % 255;
    }
-
    return (sum2 << 8) | sum1;
 }
