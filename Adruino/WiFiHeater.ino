@@ -21,6 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+// #define SDEBUG
 //uncomment to enable Arduino IDE Over The Air update code
 #define OTA_ENABLE
 
@@ -55,7 +56,8 @@ const int serverPort = 82;                    // HTTP port
 const char hostName[] = "Waterbed";
 //const char hostName[] = "Waterbed2";
 
-#define TOP_PAD   0  // side expansion pad
+#define BTN_2     0 // right top
+#define BTN_1     1 // left top
 #define VIBE      2  // side expansion pad
 #define ESP_LED   2  //Blue LED on ESP07 (on low)
 #define SDA       4
@@ -75,6 +77,7 @@ SSD1306 display(0x3C, SDA, SCL); // Initialize the oled display for address 0x3C
 int displayOnTimer;
 AM2320 am;
 uint16_t light;
+bool bSetDisplay;
 
 eeMem eemem;
 
@@ -159,7 +162,7 @@ String setJson() // settings
   String s = "{";
 
   s += "\"vt\":";  s += sDec(ee.vacaTemp);
-  s += ",\"o\":";   s += ee.bEnableOLED;
+  s += ",\"o\":";   s += bSetDisplay;
   s += ",\"tz\":";  s += ee.tz;
   s += ",\"avg\":";  s += ee.bAvg;
   s += ",\"ppkwh\":"; s += ee.ppkwh;
@@ -303,7 +306,7 @@ void parseParams(AsyncWebServerRequest *request)
         break;
       case 'p':
         s.toCharArray(ee.szSSIDPassword, sizeof(ee.szSSIDPassword));
-        eemem.update(currCost(), currWatts());
+        eemem.update(false, currCost(), currWatts());
         wifi.setPass();
         break;
       case 'c': // restore the month's total (in cents) after updates
@@ -363,7 +366,6 @@ String timeFmt(bool do_sec, bool do_M)
 }
 
 void handleS(AsyncWebServerRequest *request) { // standard params, but no page
-  Serial.println("handleS\n");
   parseParams(request);
 
   String page = "{\"ip\": \"";
@@ -415,7 +417,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
             bKeyGood = true;
           break;
         case 1: // OLED
-          ee.bEnableOLED = iValue ? true:false;
+          bSetDisplay = iValue ? true:false;
           break;
         case 2: // TZ
           ee.tz = iValue;
@@ -439,7 +441,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           ee.bVaca = iValue;
           break;
         case 8: // vacatemp
-          ee.vacaTemp = constrain( (int)(atof(psValue)*10), 400, 800); // 40-80F
+          ee.vacaTemp = constrain( (int)(atof(psValue)*10), 600, 840); // 60-84F
           break;
         case 9: // I
           item = iValue;
@@ -532,11 +534,16 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
 
 void setup()
 {
+#ifdef SDEBUG
   Serial.begin(115200);
   delay(100);
   Serial.println();
   Serial.println("Starting");
+#else
+  pinMode(BTN_1, INPUT_PULLUP);
+#endif
 
+  pinMode(BTN_2, INPUT_PULLUP);  // IO0 needs external WPU
   pinMode(TONE, OUTPUT);
   digitalWrite(TONE, LOW);
   pinMode(BTN_UP, INPUT_PULLUP);
@@ -552,12 +559,13 @@ void setup()
   wifi.autoConnect(hostName, controlPassword); // Tries config AP, then starts softAP mode for config
   if(!wifi.isCfg() == false)
   {
-    if ( !MDNS.begin ( hostName, WiFi.localIP() ) )
-      Serial.println ( "MDNS responder failed" );
+    MDNS.begin ( hostName, WiFi.localIP() );
+#ifdef SDEBUG
     Serial.println("");
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());
+#endif
   }
 
 #ifdef USE_SPIFFS
@@ -670,7 +678,7 @@ void setup()
   ArduinoOTA.setHostname(hostName);
   ArduinoOTA.begin();
   ArduinoOTA.onStart([]() {
-    eemem.update(currCost(), currWatts());
+    eemem.update(true, currCost(), currWatts());
   });
 #endif
 
@@ -681,6 +689,7 @@ void setup()
 
   if( ds.search(ds_addr) )
   {
+ #ifdef SDEBUG
     Serial.print("OneWire device: "); // 28 22 92 29 7 0 0 6B
     for( int i = 0; i < 8; i++) {
       Serial.print(ds_addr[i], HEX);
@@ -690,10 +699,13 @@ void setup()
     if( OneWire::crc8( ds_addr, 7) != ds_addr[7]){
       Serial.println("Invalid CRC");
     }
+ #endif
   }
   else
   {
+#ifdef SDEBUG
     Serial.println("No OneWire devices");
+ #endif
   }
 
   if(wifi.isCfg() == false)
@@ -703,6 +715,7 @@ void setup()
   }
 
   Tone(2600, 200);
+  bSetDisplay = ee.bEnableOLED;
 }
 
 uint16_t ssCnt = 30;
@@ -713,6 +726,7 @@ void loop()
   static RunningMedian<uint16_t,24> lightMedian;
   static uint8_t min_save, sec_save, mon_save = 0;
   static bool bLastOn;
+  static bool bSkip;
 
   MDNS.update();
 #ifdef OTA_ENABLE
@@ -742,21 +756,30 @@ void loop()
     }
   }
 
+  if(bSetDisplay != ee.bEnableOLED)
+  {
+    ee.bEnableOLED = bSetDisplay;
+    display.init();
+    display.flipScreenVertically();
+  }
   if(sec_save != second()) // only do stuff once per second
   {
     sec_save = second();
 
     checkTemp();
-    static uint8_t am_cnt = 2;
+    static uint8_t am_cnt = 5;
     if(--am_cnt == 0)
     {
-      am_cnt = 30;
-      if(am.measure())
+      am_cnt = 20;
+
+      float temp2, rh2;
+      if(am.measure(temp2, rh2))
       {
         float newtemp, newrh;
-        tempMedian[0].add( (1.8 * am.getTemperature() + 32.0) * 10 );
+
+        tempMedian[0].add( (1.8 * temp2 + 32.0) * 10 );
         tempMedian[0].getAverage(2, newtemp);
-        tempMedian[1].add(am.getHumidity() * 10);
+        tempMedian[1].add(rh2 * 10);
         tempMedian[1].getAverage(2, newrh);
         if(roomTemp != newtemp)
         {
@@ -766,8 +789,7 @@ void loop()
         }
       }else
       {
-        ws.textAll("alert;AM2320 error " + String(am.getErrorCode()));
-        am_cnt = 60;
+        ws.textAll("print;AM2320 error");
       }
     }
 
@@ -796,19 +818,17 @@ void loop()
           mon_save = month();
         }
         addLog();
-        eemem.update(currCost(), currWatts());      // update EEPROM if needed while we're at it (give user time to make many adjustments)
+        if( eemem.update(false, currCost(), currWatts()) )      // update EEPROM if needed while we're at it (give user time to make many adjustments)
+          ws.textAll("print; EE updated");
       }
       if(min_save == 30)
         addLog(); // half hour log
     }
-    if(displayOnTimer)
-    {
-      displayOnTimer --;
-    }
-    if(nWrongPass)
-      nWrongPass--;
-    if(bHeater)
-      onCounter++;
+
+    if(displayOnTimer) displayOnTimer --;
+    if(nWrongPass)    nWrongPass--;
+    if(bHeater)      onCounter++;
+
     if(bHeater != bLastOn || onCounter > (60*60*12)) // total up when it turns off or before 32 bit carry error
     {
       if(bLastOn)
@@ -828,7 +848,8 @@ void loop()
 
   if(wifi.isCfg())
     return;
-
+  if(bSkip){bSkip = false; return;}
+ 
   // Draw screen
   static bool blnk;
   static long last;
@@ -885,6 +906,7 @@ void loop()
     display.drawPropString(x[0]+2, 33, temp );
     temp = sDec( hiTemp ) + "]";
     display.drawPropString(x[1]+10, 33, temp );
+
     if(bHeater)
     {
       if( (millis() - last) > 400) // 400ms toggle for blinker
@@ -992,7 +1014,7 @@ void checkTemp()
     case 0: // start a conversion
       ds.reset();
       ds.select(ds_addr);
-      ds.write(0x44,0);   // start conversion, no parasite power on at the end
+      ds.write(0x44, 0);   // start conversion, no parasite power on at the end
       state++;
       return;
     case 1:
@@ -1073,69 +1095,72 @@ void sendState()
 // Check the buttons
 void checkButtons()
 {
-  static bool bState[2];
-  static bool lbState[2];
-  static long debounce[2];
+#define BTN_CNT 4
+  static bool bState[BTN_CNT];
+  static bool bNewState[BTN_CNT];
+  static bool lbState[BTN_CNT];
+  static long debounce[BTN_CNT];
   static long lRepeatMillis;
+  static bool bRepeat;
 
-  bool bUp = digitalRead(BTN_UP);
-  bool bDn = digitalRead(BTN_DN);
+  static uint8_t buttons[] = {BTN_UP, BTN_DN, BTN_1, BTN_2};
 
-  if(bUp != lbState[0]) debounce[0] = millis(); // reset on state change
-  if(bDn != lbState[1]) debounce[1] = millis();
+#define REPEAT_DELAY 200 // increase for slower repeat
 
-#define REPEAT_DELAY 130
-
-  if ((millis() - debounce[0]) > 20)
+  for(int i = 0; i < BTN_CNT; i++)
   {
-    if (bUp != bState[0])
+    bNewState[i] = digitalRead(buttons[i]);
+    if(bNewState[i] != lbState[i])
+      debounce[i] = millis(); // reset on state change
+
+    bool bInvoke = false;
+    if((millis() - debounce[i]) > 30)
     {
-      bState[0] = bUp;
-      if (bState[0] == LOW)
+      if(bNewState[i] != bState[i]) // press or release
       {
-        if(ee.bEnableOLED == false && displayOnTimer == 0) // skip first press with display off
-          displayOnTimer = 30;
-        else
-          changeTemp(1);
-        lRepeatMillis = millis(); // initial increment
+        bState[i] = bNewState[i];
+        if (bState[i] == LOW) // pressed
+        {
+          if(ee.bEnableOLED == false && displayOnTimer == 0) // skip first press with display off
+            displayOnTimer = 30;
+          else
+            bInvoke = true;
+          lRepeatMillis = millis(); // initial increment (doubled)
+          bRepeat = false;
+        }
+      }
+      else if(bState[i] == LOW) // holding down
+      {
+        if( (millis() - lRepeatMillis) > REPEAT_DELAY * (bRepeat?1:2) )
+        {
+          bInvoke = true;
+          lRepeatMillis = millis();
+          bRepeat = true;
+        }
       }
     }
-    else if(bState[0] == LOW) // holding down
+
+    if(bInvoke) switch(i)
     {
-      if( (millis() - lRepeatMillis) > REPEAT_DELAY) // increase for slower repeat
-      {
+      case 0: // temp up
         changeTemp(1);
-        lRepeatMillis = millis();
-      }
-    }
-  }
-
-  if ((millis() - debounce[1]) > 20)
-  {
-    if (bDn != bState[1])
-    {
-      bState[1] = bDn;
-      if (bState[1] == LOW)
-      {
-        if(ee.bEnableOLED == false && displayOnTimer == 0)
-          displayOnTimer = 30;
-        else
-          changeTemp(-1);
-        lRepeatMillis = millis(); // initial decrement
-      }
-    }
-    else if(bState[1] == LOW) // holding down
-    {
-      if( (millis() - lRepeatMillis) > REPEAT_DELAY)
-      {
+        break;
+      case 1: // temp down
         changeTemp(-1);
-        lRepeatMillis = millis();
-      }
+        break;
+      case 2: // left top button
+        if(displayOnTimer)
+          displayOnTimer = 0;
+        else
+          displayOnTimer = 30;
+        break;
+      case 3: // right top button
+        bSetDisplay = !bSetDisplay;
+        displayOnTimer = 0;
+        break;
     }
+    lbState[i] = bNewState[i];
   }
-
-  lbState[0] = bUp;
-  lbState[1] = bDn;
 }
 
 void changeTemp(int delta)
