@@ -90,7 +90,7 @@ UdpTime utime;
 uint16_t roomTemp;
 uint16_t rh;
 
-int currentTemp = 850;
+int currentTemp = 860;
 int hiTemp; // current target
 int loTemp;
 bool bHeater = false;
@@ -135,7 +135,7 @@ float currCost()
 float currWatts()
 {
   float fCurTotalWatts = fTotalWatts;
-  if(onCounter) fCurTotalWatts += (float)onCounter * (float)ee.watts  / 360; // add current cycle
+  if(onCounter) fCurTotalWatts += (float)onCounter * (float)ee.watts  / 3600; // add current cycle
   return fCurTotalWatts;
 }
 
@@ -151,7 +151,7 @@ String dataJson()
   s += ", \"temp\": ";  s += sDec(roomTemp);
   s += ", \"rh\": ";   s += sDec(rh);
   s += ", \"tc\": ";   s += String(currCost(), 3);
-  s += ", \"wh\": ";   s += String(currWatts(), 3);
+  s += ", \"wh\": ";   s += String(currWatts(), 1);
   s += ", \"l\": ";   s += light;
   s += "}";
   return s;
@@ -280,6 +280,8 @@ void parseParams(AsyncWebServerRequest *request)
         sendState();
         break;
       case 'a':
+        eemem.update(true, currCost(), currWatts());
+        delay(100);
         ESP.reset();
         break;
       case 'b': // beep : /s?key=pass&b=1000,800,3 (tone or ms,tone,cnt)
@@ -770,7 +772,7 @@ void loop()
     static uint8_t am_cnt = 5;
     if(--am_cnt == 0)
     {
-      am_cnt = 20;
+      am_cnt = 30;
 
       float temp2, rh2;
       if(am.measure(temp2, rh2))
