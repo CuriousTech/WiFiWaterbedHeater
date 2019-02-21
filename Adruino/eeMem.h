@@ -43,17 +43,18 @@ struct eeSet // EEPROM backed data
   uint16_t costs[12];
   uint16_t wh[12];    // watt hours per month
   uint16_t tAdj[2];
+  Alarm   alarm[MAX_SCHED];
+// end of CRC
+  uint16_t lightLevel[2];
   float   fTotalCost;
   float   fTotalWatts;
-  Alarm   alarm[MAX_SCHED];
-  uint16_t lightLevel[2];
 };
 
 class eeMem
 {
 public:
   eeMem();
-  bool update(bool bForce, float currCost, float currWatts);
+  bool update(bool bForce);
   bool verify(bool bComp);
 private:
   uint16_t Fletcher16( uint8_t* data, int count);
