@@ -1,6 +1,8 @@
 #include "eeMem.h"
 #include <EEPROM.h>
 
+extern void eSend(String s);
+
 eeSet ee = {
   sizeof(eeSet), 0xAAAA,
   "",  // saved SSID
@@ -12,11 +14,11 @@ eeSet ee = {
   true,   // OLED
   false,
   {
-    {840,  3*60, 3, 0, "Midnight"},
-    {820,  6*60, 5, 0, "Early"},  // temp, time, thresh, wday
-    {812,  8*60, 3, 0, "Morning"},
-    {812, 15*60+30, 3, 0, "Day"},
-    {840, 20*60+30, 3, 0, "Night"},
+    {825,  3*60, 3, 0, "Midnight"},
+    {815,  6*60, 5, 0, "Early"},  // temp, time, thresh, wday
+    {810,  8*60, 3, 0, "Morning"},
+    {810, 16*60, 3, 0, "Day"},
+    {825, 21*60, 3, 0, "Night"},
     {830,  0*60, 3, 0, "Sch6"},
     {830,  0*60, 3, 0, "Sch7"},
     {830,  0*60, 3, 0, "Sch8"}
@@ -28,13 +30,14 @@ eeSet ee = {
   {0}, // cost months
   {0},
   {0,0}, // tAdj[2]
-  0.0,
-  0.0,
   {
     {0, 1000, 8*60, 0x3E,"Weekday"},
     {0},
   }, // alarms
+//end of CRC (low priority below)
   {1024,0}, // lightlevel
+  0.0,
+  0.0,
 };
 
 eeMem::eeMem()
@@ -43,22 +46,19 @@ eeMem::eeMem()
   verify(false);
 }
 
-bool eeMem::update(bool bForce, float currCost, float currWatts) // write the settings if changed
+bool eeMem::update(bool bForce) // write the settings if changed
 {
   uint16_t old_sum = ee.sum;
   ee.sum = 0;
-  ee.sum = Fletcher16((uint8_t*)&ee, sizeof(eeSet));
+  ee.sum = Fletcher16((uint8_t*)&ee, offsetof(eeSet, lightLevel) );
 
   if(bForce == false && old_sum == ee.sum)
   {
     return false; // Nothing has changed?
   }
 
-  ee.fTotalCost = currCost;
-  ee.fTotalWatts = currWatts;
-
   ee.sum = 0;
-  ee.sum = Fletcher16((uint8_t*)&ee, sizeof(eeSet));
+  ee.sum = Fletcher16((uint8_t*)&ee, offsetof(eeSet, lightLevel) );
 
   uint8_t *pData = (uint8_t *)&ee;
   for(int addr = 0; addr < sizeof(eeSet); addr++)
@@ -82,7 +82,7 @@ bool eeMem::verify(bool bComp)
     return false; // revert to defaults if struct size changes
   uint16_t sum = pwTemp[1];
   pwTemp[1] = 0;
-  pwTemp[1] = Fletcher16(data, sizeof(eeSet) );
+  pwTemp[1] = Fletcher16(data, offsetof(eeSet, lightLevel) );
   if(pwTemp[1] != sum) return false; // revert to defaults if sum fails
 
   if(bComp)
