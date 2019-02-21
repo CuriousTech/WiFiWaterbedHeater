@@ -52,7 +52,7 @@ SOFTWARE.
 #include <AM2320.h>
 #include "jsonstring.h"
 
-const char controlPassword[] = "esp8266ct";    // device password for modifying any settings
+const char controlPassword[] = "password";    // device password for modifying any settings
 const int serverPort = 82;                    // HTTP port
 const char hostName[] = "Waterbed";
 //const char hostName[] = "Waterbed2";
