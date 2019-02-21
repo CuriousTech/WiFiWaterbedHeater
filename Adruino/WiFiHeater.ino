@@ -50,8 +50,9 @@ SOFTWARE.
 #include "RunningMedian.h"
 #include <JsonParse.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonParse
 #include <AM2320.h>
+#include "jsonstring.h"
 
-const char controlPassword[] = "password";    // device password for modifying any settings
+const char controlPassword[] = "esp8266ct";    // device password for modifying any settings
 const int serverPort = 82;                    // HTTP port
 const char hostName[] = "Waterbed";
 //const char hostName[] = "Waterbed2";
@@ -77,7 +78,6 @@ SSD1306 display(0x3C, SDA, SCL); // Initialize the oled display for address 0x3C
 int displayOnTimer;
 AM2320 am;
 uint16_t light;
-bool bSetDisplay;
 
 eeMem eemem;
 
@@ -98,8 +98,7 @@ uint8_t schInd = 0;
 String sMessage;
 uint8_t msgCnt;
 uint32_t onCounter;
-float fTotalCost;
-float fTotalWatts;
+bool bStartDisplay;
 
 int toneFreq = 1000;
 int tonePeriod = 100;
@@ -109,8 +108,7 @@ int vibePeriod = 200;
 int vibeCnt;
 
 struct tempArr{
-  uint8_t h;
-  uint8_t m;
+  uint16_t min;
   uint16_t temp;
   uint8_t state;
   uint16_t rm;
@@ -127,81 +125,64 @@ const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep
 
 float currCost()
 {
-  float fCurTotalCost = fTotalCost;
+        // seconds * (price_per_KWH / 10000) / secs_per_hour * watts
+  float fCurTotalCost = ee.fTotalCost;
   if(onCounter) fCurTotalCost += (float)onCounter * (float)ee.watts  / 10000.0 * (float)ee.ppkwh / 3600000.0; // add current cycle
   return fCurTotalCost;
 }
 
 float currWatts()
 {
-  float fCurTotalWatts = fTotalWatts;
+  float fCurTotalWatts = ee.fTotalWatts;
   if(onCounter) fCurTotalWatts += (float)onCounter * (float)ee.watts  / 3600; // add current cycle
   return fCurTotalWatts;
 }
 
+bool updateAll(bool bForce)
+{
+  ee.fTotalCost = currCost();
+  ee.fTotalWatts = currWatts();
+  return eemem.update(bForce);
+}
+
 String dataJson()
 {
-  String s = "{";
-  s += "\"t\": ";  s += now() - ((ee.tz + utime.getDST()) * 3600);
-  s += ",\"waterTemp\": "; s += sDec(currentTemp);
-  s += ",\"setTemp\": ";  s += sDec(ee.schedule[schInd].setTemp);
-  s += ", \"hiTemp\": ";  s += sDec(hiTemp);
-  s += ", \"loTemp\": ";  s += sDec(loTemp);
-  s += ", \"on\": ";    s += bHeater;
-  s += ", \"temp\": ";  s += sDec(roomTemp);
-  s += ", \"rh\": ";   s += sDec(rh);
-  s += ", \"tc\": ";   s += String(currCost(), 3);
-  s += ", \"wh\": ";   s += String(currWatts(), 1);
-  s += ", \"l\": ";   s += light;
-  s += "}";
-  return s;
+  jsonString js;
+
+  js.Var("t", (uint32_t)(now() - ((ee.tz + utime.getDST()) * 3600)) );
+  js.Var("waterTemp", String((float)currentTemp/10, 1) );
+  js.Var("setTemp",  String((float)ee.schedule[schInd].setTemp/10, 1) );
+  js.Var("hiTemp",  String((float)hiTemp/10, 1) );
+  js.Var("loTemp",  String((float)loTemp/10, 1) );
+  js.Var("on",    bHeater );
+  js.Var("temp",  String((float)roomTemp/10, 1) );
+  js.Var("rh",   String((float)rh/10, 1) );
+  js.Var("tc",   String(currCost(), 3) );
+  js.Var("wh",   String(currWatts(), 1) );
+  js.Var("l",   light);
+
+  return js.Close();
 }
 
 String setJson() // settings
 {
-  String s = "{";
+  jsonString js;
 
-  s += "\"vt\":";  s += sDec(ee.vacaTemp);
-  s += ",\"o\":";   s += bSetDisplay;
-  s += ",\"tz\":";  s += ee.tz;
-  s += ",\"avg\":";  s += ee.bAvg;
-  s += ",\"ppkwh\":"; s += ee.ppkwh;
-  s += ",\"vo\":";   s += ee.bVaca;
-  s += ",\"idx\":";  s += schInd;
-  s += ",\"cnt\":";  s += ee.schedCnt;
-  s += ",\"w\":";  s += ee.watts;
-  s += ",\"r\":"; s += ee.rate;
-  s += ",\"item\":[";
-  for(int i = 0; i < 8; i++)
-  {
-    if(i) s += ",";
-    s += "[\"";  s += ee.schedule[i].name; s += "\",\"";
-    int h = ee.schedule[i].timeSch / 60;
-    int m = ee.schedule[i].timeSch % 60;
-    s += h;  s += ":";
-    if(m<10) s += "0";
-    s += m;
-    s += "\","; s += sDec(ee.schedule[i].setTemp);
-    s += ",";  s += sDec(ee.schedule[i].thresh);
-    s += "]";
-  }
-  s += "]";
-  s += ",\"tc\":[";
-  for(int i = 0; i < 12; i++)
-  {
-    if(i) s += ",";
-    s += "\"";
-    s += String((float)ee.costs[i] / 100);
-    s += "\"";
-  }
-  s += "],\"tw\":[";
-  for(int i = 0; i < 12; i++)
-  {
-    if(i) s += ",";
-    s += ee.wh[i];
-  }
-  s += "]}";
-  return s;
+  js.Var("vt", String((float)ee.vacaTemp/10, 1) );
+  js.Var("o",   ee.bEnableOLED);
+  js.Var("tz",  ee.tz);
+  js.Var("avg", ee.bAvg);
+  js.Var("ppkwh",ee.ppkwh);
+  js.Var("vo",  ee.bVaca);
+  js.Var("idx", schInd);
+  js.Var("cnt", ee.schedCnt);
+  js.Var("w",  ee.watts);
+  js.Var("r", ee.rate);
+  js.Array("item", ee.schedule, 8);
+  js.ArrayCost("tc", ee.costs, 12);
+  js.Array("tw", ee.wh, 12);
+
+  return js.Close();
 }
 
 void ePrint(const char *s)
@@ -241,12 +222,11 @@ void parseParams(AsyncWebServerRequest *request)
       nWrongPass <<= 1;
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
-    String data = "hack;{\"ip\":\"";
-    data += request->client()->remoteIP().toString();
-    data += "\",\"pass\":\"";
-    data += password;
-    data += "\"}";
-    ws.textAll(data);
+
+    jsonString js("hack");
+    js.Var("ip", request->client()->remoteIP().toString() );
+    js.Var("pass", password);
+    ws.textAll(js.Close());
     lastIP = ip;
     return;
   }
@@ -270,6 +250,7 @@ void parseParams(AsyncWebServerRequest *request)
         msgCnt = 4;
         if(ee.bEnableOLED == false)
         {
+          bStartDisplay = true;
           displayOnTimer = 60;
         }
         break;
@@ -280,7 +261,7 @@ void parseParams(AsyncWebServerRequest *request)
         sendState();
         break;
       case 'a':
-        eemem.update(true, currCost(), currWatts());
+        updateAll(true);
         delay(100);
         ESP.reset();
         break;
@@ -308,14 +289,14 @@ void parseParams(AsyncWebServerRequest *request)
         break;
       case 'p':
         s.toCharArray(ee.szSSIDPassword, sizeof(ee.szSSIDPassword));
-        eemem.update(false, currCost(), currWatts());
+        updateAll( false );
         wifi.setPass();
         break;
       case 'c': // restore the month's total (in cents) after updates
-        fTotalCost = (float)val / 100;
+        ee.fTotalCost = (float)val / 100;
         break;
-      case 'w': // restore the month's total (in watts) after updates
-        fTotalWatts = (float)val;
+      case 'w': // restore the month's total (in watthours) after updates
+        ee.fTotalWatts = (float)val;
         break;
       case 'v': // vibe
         {
@@ -370,12 +351,11 @@ String timeFmt(bool do_sec, bool do_M)
 void handleS(AsyncWebServerRequest *request) { // standard params, but no page
   parseParams(request);
 
-  String page = "{\"ip\": \"";
-  page += WiFi.localIP().toString();
-  page += ":";
-  page += serverPort;
-  page += "\"}";
-  request->send ( 200, "text/json", page );
+  jsonString js;
+  String s = WiFi.localIP().toString() + ":";
+  s += serverPort;
+  js.Var("ip", s);
+  request->send ( 200, "text/json", js.Close() );
 }
 
 const char *jsonListCmd[] = { "cmd",
@@ -397,6 +377,9 @@ const char *jsonListCmd[] = { "cmd",
   "beepP", // 15
   "vibe",
   "watts",
+  "dot",
+  "save",
+  "aadj", // 20
   NULL
 };
 
@@ -419,7 +402,9 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
             bKeyGood = true;
           break;
         case 1: // OLED
-          bSetDisplay = iValue ? true:false;
+          if( ee.bEnableOLED == false && iValue)
+            bStartDisplay = true;
+          ee.bEnableOLED = iValue ? true:false;
           break;
         case 2: // TZ
           ee.tz = iValue;
@@ -433,7 +418,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           ws.textAll(String("set;") + setJson()); // update all the entries
           break;
         case 5: // tadj
-          changeTemp(iValue);
+          changeTemp(iValue, false);
           ws.textAll(String("set;") + setJson()); // update all the entries
           break;
         case 6: // ppkw
@@ -484,6 +469,19 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           break;
         case 17: // watts
           ee.watts = iValue;
+          break;
+        case 18: // dot displayOnTimer
+          if((displayOnTimer ==0 ) && (displayOnTimer = iValue))
+          {
+            bStartDisplay = true;
+          }
+          break;
+        case 19: // save
+          updateAll(true);
+          break;
+        case 20: // aadj
+          changeTemp(iValue, true);
+          ws.textAll(String("set;") + setJson()); // update all the entries
           break;
       }
       break;
@@ -616,14 +614,15 @@ void setup()
     } else if(n){
       for (int i = 0; i < n; ++i){
         if(i) json += ",";
-        json += "{";
-        json += "\"rssi\":"+String(WiFi.RSSI(i));
-        json += ",\"ssid\":\""+WiFi.SSID(i)+"\"";
-        json += ",\"bssid\":\""+WiFi.BSSIDstr(i)+"\"";
-        json += ",\"channel\":"+String(WiFi.channel(i));
-        json += ",\"secure\":"+String(WiFi.encryptionType(i));
-        json += ",\"hidden\":"+String(WiFi.isHidden(i)?"true":"false");
-        json += "}";
+        jsonString js;
+
+        js.Var("rssi", String(WiFi.RSSI(i)) );
+        js.Var("ssid", WiFi.SSID(i) );
+        js.Var("bssid", WiFi.BSSIDstr(i) );
+        js.Var("channel", String(WiFi.channel(i)) );
+        js.Var("secure", String(WiFi.encryptionType(i)) );
+        js.Var("hidden", String(WiFi.isHidden(i)?"true":"false") );
+        json += js.Close();
       }
       WiFi.scanDelete();
       if(WiFi.scanComplete() == -2){
@@ -632,7 +631,6 @@ void setup()
     }
     json += "]";
     request->send(200, "text/json", json);
-    json = String();
   });
   server.on("/data", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "tdata=[";
@@ -640,8 +638,7 @@ void setup()
     for (int i = 0; i <= 96; ++i){
       if(tempArray[i].state == 2) // now
       {
-        tempArray[i].h = hour();
-        tempArray[i].m = minute();
+        tempArray[i].min = (hour()*60) + minute();
         tempArray[i].temp = currentTemp;
         tempArray[i].rm = roomTemp;
         tempArray[i].rh = rh;
@@ -649,19 +646,18 @@ void setup()
       if(tempArray[i].temp) // only send entries in use (hitting a limit when SSL is compiled in)
       {
         if(bSent) json += ",";
-        json += "{";
-        json += "\"tm\":\"" + String(tempArray[i].h) + ":" + String(tempArray[i].m) + "\"";
-        json += ",\"t\":\"" + sDec(tempArray[i].temp) + "\"";
-        json += ",\"s\":" + String(tempArray[i].state);
-        json += ",\"rm\":\"" + sDec(tempArray[i].rm) + "\"";
-        json += ",\"rh\":\"" + sDec(tempArray[i].rh) + "\"";
-        json += "}";
+        jsonString js;
+        js.Var("tm", tempArray[i].min );
+        js.Var("t", String(sDec(tempArray[i].temp)) );
+        js.Var("s", tempArray[i].state );
+        js.Var("rm", String( sDec(tempArray[i].rm) ) );
+        js.Var("rh", String( sDec(tempArray[i].rh) ) );
+        json += js.Close();
         bSent = true;
       }
     }
     json += "]";
     request->send(200, "text/json", json);
-    json = String();
   });
 
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -680,13 +676,10 @@ void setup()
   ArduinoOTA.setHostname(hostName);
   ArduinoOTA.begin();
   ArduinoOTA.onStart([]() {
-    eemem.update(true, currCost(), currWatts());
+    digitalWrite(HEAT, HIGH);
+    updateAll( true );
   });
 #endif
-
-  fTotalCost = ee.fTotalCost; // restore saved current values
-  fTotalWatts = ee.fTotalWatts;
-
   jsonParse.addList(jsonListCmd);
 
   if( ds.search(ds_addr) )
@@ -717,7 +710,7 @@ void setup()
   }
 
   Tone(2600, 200);
-  bSetDisplay = ee.bEnableOLED;
+  bStartDisplay = ee.bEnableOLED;
 }
 
 uint16_t ssCnt = 30;
@@ -758,21 +751,55 @@ void loop()
     }
   }
 
-  if(bSetDisplay != ee.bEnableOLED)
+  if(bStartDisplay)
   {
-    ee.bEnableOLED = bSetDisplay;
+    bStartDisplay = false;
     display.init();
     display.flipScreenVertically();
   }
+
   if(sec_save != second()) // only do stuff once per second
   {
     sec_save = second();
 
     checkTemp();
-    static uint8_t am_cnt = 5;
+/*    static uint8_t am_cnt = 5;
     if(--am_cnt == 0)
     {
       am_cnt = 30;
+
+    }
+*/
+    if(--ssCnt == 0)
+       sendState();
+
+    if(min_save != minute()) // only do stuff once per minute
+    {
+      min_save = minute();
+      checkSched(false);     // check every minute for next schedule
+      if( min_save == 0)     // update our IP and time daily (at 2AM for DST)
+      {
+        if( hour() == 2)
+        {
+          utime.start();
+        }
+        if( mon_save != month() )
+        {
+          if(mon_save) // first hour after start hour
+          {
+            ee.costs[mon_save-1] = ee.fTotalCost * 100; // f dollars to dec cents at the end of the month
+            ee.fTotalCost = 0;
+            ee.wh[mon_save-1] = ee.fTotalWatts; // save watt hours used at the end of the month
+            ee.fTotalWatts = 0;
+          }
+          mon_save = month();
+        }
+        addLog();
+        if( eemem.update(false) )      // update EEPROM if needed while we're at it (give user time to make many adjustments)
+          ws.textAll("print; EE updated");
+      }
+      if(min_save == 30)
+        addLog(); // half hour log
 
       float temp2, rh2;
       if(am.measure(temp2, rh2))
@@ -791,40 +818,12 @@ void loop()
         }
       }else
       {
-        ws.textAll("print;AM2320 error");
+        String s;
+        s = "print;AM2320 error ";
+        s += bHeater;
+        ws.textAll(s);
       }
-    }
-
-    if(--ssCnt == 0)
-       sendState();
-
-    if(min_save != minute()) // only do stuff once per minute
-    {
-      min_save = minute();
-      checkSched(false);     // check every minute for next schedule
-      if( min_save == 0)     // update our IP and time daily (at 2AM for DST)
-      {
-        if( hour() == 2)
-        {
-          utime.start();
-        }
-        if( mon_save != month() )
-        {
-          if(mon_save) // first hour after start hour
-          {
-            ee.costs[mon_save-1] = fTotalCost * 100; // f dollars to dec cents at the end of the month
-            fTotalCost = 0;
-            ee.wh[mon_save-1] = fTotalWatts; // save watt hours used at the end of the month
-            fTotalWatts = 0;
-          }
-          mon_save = month();
-        }
-        addLog();
-        if( eemem.update(false, currCost(), currWatts()) )      // update EEPROM if needed while we're at it (give user time to make many adjustments)
-          ws.textAll("print; EE updated");
-      }
-      if(min_save == 30)
-        addLog(); // half hour log
+    
     }
 
     if(displayOnTimer) displayOnTimer --;
@@ -834,9 +833,8 @@ void loop()
     if(bHeater != bLastOn || onCounter > (60*60*12)) // total up when it turns off or before 32 bit carry error
     {
       if(bLastOn)
-      {                       // seconds * (price_per_KWH / 10000) / secs_per_hour * watts
-        fTotalCost += (float)onCounter * (float)ee.watts / 10000.0 * (float)ee.ppkwh / 3600000.0;
-        fTotalWatts += (float)onCounter * (float)ee.watts / 3600.0;
+      {
+        updateAll( false );
       }
       bLastOn = bHeater;
       onCounter = 0;
@@ -948,15 +946,13 @@ void addLog()
   {
     if(tempArray[95].state == 2)
       memset(&tempArray[95], 0, sizeof(tempArr));
-    tempArray[96].h = 24;
-    tempArray[96].m = 0;
+    tempArray[96].min = 24*60;
     tempArray[96].temp = currentTemp;
     tempArray[96].state = bHeater;
     tempArray[96].rm = roomTemp;
     tempArray[96].rh = rh;
   }
-  tempArray[iPos].h = hour();
-  tempArray[iPos].m = minute();
+  tempArray[iPos].min = (hour() * 60) + minute();
   tempArray[iPos].temp = currentTemp;
   tempArray[iPos].state = bHeater;
   tempArray[iPos].rm = roomTemp;
@@ -1145,10 +1141,16 @@ void checkButtons()
     if(bInvoke) switch(i)
     {
       case 0: // temp up
-        changeTemp(1);
+        if(ee.bVaca) // first tap, disable vacation mode
+          ee.bVaca = false;
+        else
+          changeTemp(1, true);
         break;
       case 1: // temp down
-        changeTemp(-1);
+        if(ee.bVaca) // disable vacation mode
+          ee.bVaca = false;
+        else
+          changeTemp(-1, true);
         break;
       case 2: // left top button
         if(displayOnTimer)
@@ -1157,7 +1159,9 @@ void checkButtons()
           displayOnTimer = 30;
         break;
       case 3: // right top button
-        bSetDisplay = !bSetDisplay;
+        ee.bEnableOLED = !ee.bEnableOLED;
+        if(ee.bEnableOLED)
+          bStartDisplay = true;
         displayOnTimer = 0;
         break;
     }
@@ -1165,10 +1169,15 @@ void checkButtons()
   }
 }
 
-void changeTemp(int delta)
+void changeTemp(int delta, bool bAll)
 {
   if(ee.bVaca) return;
-  if(ee.bAvg) // bump both used in avg mode
+  if(bAll)
+  {
+    for(int i = 0; i < ee.schedCnt; i++)
+      ee.schedule[i].setTemp += delta;
+  }
+  else if(ee.bAvg) // bump both used in avg mode
   {
     ee.schedule[schInd].setTemp += delta;
     ee.schedule[ (schInd+1) % ee.schedCnt].setTemp += delta;
