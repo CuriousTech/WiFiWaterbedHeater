@@ -24,7 +24,6 @@ SOFTWARE.
 // #define SDEBUG
 //uncomment to enable Arduino IDE Over The Air update code
 #define OTA_ENABLE
-
 //#define USE_SPIFFS
 
 #include <Wire.h>
@@ -53,9 +52,9 @@ SOFTWARE.
 #include "jsonstring.h"
 
 const char controlPassword[] = "password";    // device password for modifying any settings
-const int serverPort = 82;                    // HTTP port
-const char hostName[] = "Waterbed";
-//const char hostName[] = "Waterbed2";
+const int serverPort = 80;                    // HTTP port
+//const char hostName[] = "Waterbed";
+const char hostName[] = "Waterbed2";
 
 #define BTN_2     0 // right top
 #define BTN_1     1 // left top
@@ -151,11 +150,11 @@ String dataJson()
 
   js.Var("t", (uint32_t)(now() - ((ee.tz + utime.getDST()) * 3600)) );
   js.Var("waterTemp", String((float)currentTemp/10, 1) );
-  js.Var("setTemp",  String((float)ee.schedule[schInd].setTemp/10, 1) );
+  js.Var("setTemp", String((float)ee.schedule[schInd].setTemp/10, 1) );
   js.Var("hiTemp",  String((float)hiTemp/10, 1) );
   js.Var("loTemp",  String((float)loTemp/10, 1) );
-  js.Var("on",    bHeater );
-  js.Var("temp",  String((float)roomTemp/10, 1) );
+  js.Var("on",   (digitalRead(HEAT)==LOW) ? 1:0 );
+  js.Var("temp", String((float)roomTemp/10, 1) );
   js.Var("rh",   String((float)rh/10, 1) );
   js.Var("tc",   String(currCost(), 3) );
   js.Var("wh",   String(currWatts(), 1) );
@@ -177,7 +176,8 @@ String setJson() // settings
   js.Var("idx", schInd);
   js.Var("cnt", ee.schedCnt);
   js.Var("w",  ee.watts);
-  js.Var("r", ee.rate);
+  js.Var("r",  ee.rate);
+  js.Var("e",  ee.bEco);
   js.Array("item", ee.schedule, 8);
   js.ArrayCost("tc", ee.costs, 12);
   js.Array("tw", ee.wh, 12);
@@ -380,6 +380,7 @@ const char *jsonListCmd[] = { "cmd",
   "dot",
   "save",
   "aadj", // 20
+  "eco",
   NULL
 };
 
@@ -482,6 +483,9 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
         case 20: // aadj
           changeTemp(iValue, true);
           ws.textAll(String("set;") + setJson()); // update all the entries
+          break;
+        case 21: // eco
+          ee.bEco = iValue ? true:false;
           break;
       }
       break;
@@ -661,9 +665,13 @@ void setup()
   });
 
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
+#ifdef USE_SPIFFS
+      request->send(SPIFFS, "/favicon.ico");
+#else
     AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon, sizeof(favicon));
     response->addHeader("Content-Encoding", "gzip");
     request->send(response);
+#endif
   });
 
   server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
@@ -718,7 +726,7 @@ uint16_t ssCnt = 30;
 void loop()
 {
   static RunningMedian<uint16_t,24> tempMedian[2];
-  static RunningMedian<uint16_t,24> lightMedian;
+  static RunningMedian<uint16_t,8> lightMedian;
   static uint8_t min_save, sec_save, mon_save = 0;
   static bool bLastOn;
   static bool bSkip;
@@ -777,11 +785,12 @@ void loop()
     {
       min_save = minute();
       checkSched(false);     // check every minute for next schedule
-      if( min_save == 0)     // update our IP and time daily (at 2AM for DST)
+      if( min_save == 0)     // update clock daily (at 2AM for DST)
       {
         if( hour() == 2)
         {
           utime.start();
+          updateAll(true);      // update EEPROM daily
         }
         if( mon_save != month() )
         {
@@ -795,7 +804,7 @@ void loop()
           mon_save = month();
         }
         addLog();
-        if( eemem.update(false) )      // update EEPROM if needed while we're at it (give user time to make many adjustments)
+        if( updateAll(false) )      // update EEPROM if changed
           ws.textAll("print; EE updated");
       }
       if(min_save == 30)
@@ -828,7 +837,21 @@ void loop()
 
     if(displayOnTimer) displayOnTimer --;
     if(nWrongPass)    nWrongPass--;
-    if(bHeater)      onCounter++;
+    if(digitalRead(HEAT) == LOW) onCounter++;
+
+    static uint16_t s = 1;
+    if(ee.bEco && bHeater) // eco mode
+    {
+      bool bBoost = (currentTemp < loTemp - 600); // 6.0 deg diff
+      if(bBoost == false)
+      {
+        if(--s == 0)
+        {
+          s = 60; // turn on/off every 60 seconds
+          digitalWrite(HEAT, !digitalRead(HEAT));
+        }
+      }
+    }
 
     if(bHeater != bLastOn || onCounter > (60*60*12)) // total up when it turns off or before 32 bit carry error
     {
@@ -840,10 +863,18 @@ void loop()
       onCounter = 0;
     }
 
+  }
+
+  static int lgTime;
+  if(millis() - lgTime >= 100)
+  {
+    lgTime = millis();
+    uint16_t newLight;
     lightMedian.add( analogRead(0) );
-    lightMedian.getMedian(light);
-    if(light < ee.lightLevel[0]) ee.lightLevel[0] = light;
-    if(light > ee.lightLevel[1]) ee.lightLevel[1] = light;
+    lightMedian.getMedian(newLight);
+    if(newLight > light + 1) // light increased
+      displayOnTimer = 30;
+    light = newLight;
   }
 
   if(wifi.isCfg())
@@ -1001,6 +1032,11 @@ void Scroller(String s)
   }
 }
 
+void setHeat()
+{
+  digitalWrite(HEAT, !bHeater);
+}
+
 // Check temp to turn heater on and off
 void checkTemp()
 {
@@ -1031,7 +1067,7 @@ void checkTemp()
   if(!present)      // safety
   {
     bHeater = false;
-    digitalWrite(HEAT, !bHeater);
+    setHeat();
     return;
   }
 
@@ -1041,7 +1077,7 @@ void checkTemp()
   if(OneWire::crc8( data, 8) != data[8])  // bad CRC
   {
     bHeater = false;
-    digitalWrite(HEAT, !bHeater);
+    setHeat();
     ws.textAll("alert;Invalid CRC");
     return;
   }
@@ -1071,14 +1107,14 @@ void checkTemp()
   if(currentTemp <= loTemp && bHeater == false)
   {
     bHeater = true;
-    digitalWrite(HEAT, !bHeater);
+    setHeat();
     sendState();
     addLog();
   }
   else if(currentTemp >= hiTemp && bHeater == true)
   {
     bHeater = false;
-    digitalWrite(HEAT, !bHeater);
+    setHeat();
     sendState();
     addLog();
   }
