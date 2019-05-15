@@ -17,18 +17,20 @@ body{width:300px;display:block;margin-left:auto;margin-right:auto;text-align:rig
 </style>
 <script type="text/javascript" src="data"></script>
 <script type="text/javascript">
+// src="http://192.168.0.116/data"
 ms=Array('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec')
 a=document.all
 oledon=0
 avg=1
 cnt=1
+eco=0
 function openSocket(){
 ws=new WebSocket("ws://"+window.location.host+"/ws")
-//ws=new WebSocket("ws://192.168.0.116:82/ws")
+//ws=new WebSocket("ws://192.168.0.116/ws")
 ws.onopen=function(evt) { }
 ws.onclose=function(evt) { alert("Connection closed."); }
 ws.onmessage=function(evt) {
-//console.log(evt.data)
+console.log(evt.data)
  lines=evt.data.split(';')
  event=lines[0]
  data=lines[1]
@@ -38,7 +40,7 @@ ws.onmessage=function(evt) {
   dt=new Date(d.t*1000)
   a.time.innerHTML=dt.toLocaleTimeString()
   waterTemp=+d.waterTemp
-  a.temp.innerHTML=+waterTemp+'&degF'
+  a.temp.innerHTML=d.waterTemp+'&degF'
   a.on.innerHTML=(d.on?"<font color='red'><b>":"")+d.hiTemp+"&degF"+(d.on?"</b></font>":"")
   a.rt.innerHTML=+d.temp+'&degF'
   a.rh.innerHTML=+d.rh+'%'
@@ -56,6 +58,7 @@ ws.onmessage=function(evt) {
   ppkw=d.ppkwh/10000
   a.K.value=ppkw
   a.vo.value=d.vo?'ON ':'OFF'
+  a.eco.value=d.e?'ON ':'OFF'
   watts=a.w
   cnt=d.cnt
   idx=d.idx
@@ -111,6 +114,10 @@ setVar('tadj',n)
 }
 function setAllTemp(n){
 setVar('aadj',n)
+}
+function setEco(n){
+eco=!eco
+setVar('eco',eco?1:0)
 }
 function setVaca(){
 setVar('vacatemp',a.vt.value)
@@ -352,8 +359,10 @@ openSocket()
 <tr><td align=center>Bedroom: </td><td><div id="rt"></div></td><td align="left"><div id="rh"></div> </td></tr>
 <tr><td colspan=2>TZ <input id='tz' type=text size=2 value='-5'><input value="Set" type='button' onclick="{setTZ()}"> &nbsp &nbsp </td>
 <td>Display:<input type="button" value="ON " id="OLED" onClick="{oled()}"></td></tr>
-<tr><td colspan=2>Vaca <input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick="{setVaca()}"> &nbsp &nbsp </td>
+<tr><td colspan=2>Vacation <input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick="{setVaca()}"> &nbsp &nbsp </td>
 <td>Avg: <input type="button" value="OFF" id="AVG" onClick="{setavg()}"></td></tr>
+<tr><td colspan=2></td>
+<td>Eco: <input type="button" value="OFF" id="eco" onClick="{setEco()}"></td></tr>
 <tr><td>Schedule <input id='inc' type='button' onclick="{setCnt(1)}">Count <input id='dec' type='button' onclick="{setCnt(-1)}"}></td>
 <td> Temperature<br>Adjust</td>
 <td><input type='button' value='Up' onclick="{setTemp(1)}"> <input type='button' value='All Up' onclick="{setAllTemp(1)}"><br><input type='button' value='Dn' onclick="{setTemp(-1)}"> <input type='button' value='All Dn' onclick="{setAllTemp(-1)}"></td></tr>
