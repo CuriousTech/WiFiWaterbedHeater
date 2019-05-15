@@ -842,7 +842,7 @@ void loop()
     static uint16_t s = 1;
     if(ee.bEco && bHeater) // eco mode
     {
-      bool bBoost = (currentTemp < loTemp - 600); // 6.0 deg diff
+      bool bBoost = (currentTemp < loTemp - 20); // 2.0 deg diff
       if(bBoost == false)
       {
         if(--s == 0)
