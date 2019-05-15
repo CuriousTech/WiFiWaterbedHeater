@@ -12,7 +12,7 @@ eeSet ee = {
   false,  // vacation mode
   true,  // average
   true,   // OLED
-  false,
+  false, // Eco mode
   {
     {825,  3*60, 3, 0, "Midnight"},
     {815,  6*60, 5, 0, "Early"},  // temp, time, thresh, wday
@@ -23,7 +23,7 @@ eeSet ee = {
     {830,  0*60, 3, 0, "Sch7"},
     {830,  0*60, 3, 0, "Sch8"}
   },
-  1450, // ppkwh (0.145)
+  152, // ppkwh (0.152)
   58, // rate
   290, // watts (mbr = 290  gbr = 352)
 //  {1138,1273,1285, 1218,666,330, 222,202,475, 863,1170,1081}, // cost months 2018
