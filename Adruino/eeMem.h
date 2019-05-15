@@ -35,7 +35,7 @@ struct eeSet // EEPROM backed data
   bool    bVaca;         // vacation enabled
   bool    bAvg;         // average target between schedules
   bool    bEnableOLED;
-  bool    bRes;
+  bool    bEco;         // eco mode
   Sched   schedule[MAX_SCHED];  // 22x8 bytes
   uint16_t ppkwh;
   uint16_t rate;
