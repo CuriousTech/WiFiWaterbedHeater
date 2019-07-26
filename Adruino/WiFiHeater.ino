@@ -126,7 +126,7 @@ float currCost()
 {
         // seconds * (price_per_KWH / 10000) / secs_per_hour * watts
   float fCurTotalCost = ee.fTotalCost;
-  if(onCounter) fCurTotalCost += (float)onCounter * (float)ee.watts  / 10000.0 * (float)ee.ppkwh / 3600000.0; // add current cycle
+  if(onCounter) fCurTotalCost += (float)onCounter * (float)ee.watts  / 100000.0 * (float)ee.ppkwh / 3600000.0; // add current cycle
   return fCurTotalCost;
 }
 
