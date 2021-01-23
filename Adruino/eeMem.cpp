@@ -7,15 +7,15 @@ eeSet ee = {
   sizeof(eeSet), 0xAAAA,
   "",  // saved SSID
   "", // router password
-  800, -5, // vacaTemp, TZ
+  700, -5, // vacaTemp, TZ
   5,       // schedCnt
   false,  // vacation mode
   true,  // average
   true,   // OLED
-  false, // Eco mode
+  true, // Eco mode
   {
     {825,  3*60, 3, 0, "Midnight"},
-    {815,  6*60, 5, 0, "Early"},  // temp, time, thresh, wday
+    {815,  6*60, 2, 0, "Early"},  // temp, time, thresh, wday
     {810,  8*60, 3, 0, "Morning"},
     {810, 16*60, 3, 0, "Day"},
     {825, 21*60, 3, 0, "Night"},
@@ -25,19 +25,19 @@ eeSet ee = {
   },
   152, // ppkwh (0.152)
   58, // rate
-  290, // watts (mbr = 290  gbr = 352)
-//  {1138,1273,1285, 1218,666,330, 222,202,475, 863,1170,1081}, // cost months 2018
-  {0}, // cost months
-  {0},
+  290, // watts (mbr = 290  GBR = 352)
+  {0}, // ppkw
+  {0}, // secs
   {0,0}, // tAdj[2]
+  {60*3,60*1, 5},
+//  {60*5,60*10, 20}, // GBR pids
+  {0}, // res
   {
     {0, 1000, 8*60, 0x3E,"Weekday"},
     {0},
   }, // alarms
 //end of CRC (low priority below)
   {1024,0}, // lightlevel
-  0.0,
-  0.0,
 };
 
 eeMem::eeMem()
