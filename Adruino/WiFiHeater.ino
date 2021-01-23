@@ -21,7 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// #define SDEBUG
+//#define SDEBUG
 //uncomment to enable Arduino IDE Over The Air update code
 #define OTA_ENABLE
 //#define USE_SPIFFS
@@ -53,13 +53,13 @@ SOFTWARE.
 
 const char controlPassword[] = "password";    // device password for modifying any settings
 const int serverPort = 80;                    // HTTP port
-//const char hostName[] = "Waterbed";
 const char hostName[] = "Waterbed2";
 
 #define BTN_2     0 // right top
 #define BTN_1     1 // left top
-#define VIBE      2  // side expansion pad
-#define ESP_LED   2  //Blue LED on ESP07 (on low)
+//#define MOTION_PIN 3  //
+//#define VIBE      2
+//#define ESP_LED   2  //Blue LED on ESP07 (on low)
 #define SDA       4
 #define SCL       5  // OLED and AM2320
 #define HEAT     12  // Heater output
@@ -77,6 +77,9 @@ SSD1306 display(0x3C, SDA, SCL); // Initialize the oled display for address 0x3C
 int displayOnTimer;
 AM2320 am;
 uint16_t light;
+uint32_t nHeatCnt;
+uint32_t nCoolCnt;
+uint32_t nHeatETA;
 
 eeMem eemem;
 
@@ -86,6 +89,7 @@ AsyncWebSocket ws("/ws"); // access at ws://[esp ip]/ws
 
 UdpTime utime;
 
+bool bCF = false;
 uint16_t roomTemp;
 uint16_t rh;
 
@@ -98,13 +102,16 @@ String sMessage;
 uint8_t msgCnt;
 uint32_t onCounter;
 bool bStartDisplay;
+bool bMotion;
 
 int toneFreq = 1000;
 int tonePeriod = 100;
 int toneCnt;
 
+#ifdef VIBE
 int vibePeriod = 200;
 int vibeCnt;
+#endif
 
 struct tempArr{
   uint16_t min;
@@ -122,50 +129,32 @@ JsonParse jsonParse(jsonCallback);
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
-float currCost()
-{
-        // seconds * (price_per_KWH / 10000) / secs_per_hour * watts
-  float fCurTotalCost = ee.fTotalCost;
-  if(onCounter) fCurTotalCost += (float)onCounter * (float)ee.watts  / 100000.0 * (float)ee.ppkwh / 3600000.0; // add current cycle
-  return fCurTotalCost;
-}
-
-float currWatts()
-{
-  float fCurTotalWatts = ee.fTotalWatts;
-  if(onCounter) fCurTotalWatts += (float)onCounter * (float)ee.watts  / 3600; // add current cycle
-  return fCurTotalWatts;
-}
-
 bool updateAll(bool bForce)
 {
-  ee.fTotalCost = currCost();
-  ee.fTotalWatts = currWatts();
   return eemem.update(bForce);
 }
 
 String dataJson()
 {
-  jsonString js;
+  jsonString js("state");
 
   js.Var("t", (uint32_t)(now() - ((ee.tz + utime.getDST()) * 3600)) );
   js.Var("waterTemp", String((float)currentTemp/10, 1) );
-  js.Var("setTemp", String((float)ee.schedule[schInd].setTemp/10, 1) );
+  js.Var("setTemp", String((float)ee.schedule[schInd].setTemp / 10, 1) );
   js.Var("hiTemp",  String((float)hiTemp/10, 1) );
   js.Var("loTemp",  String((float)loTemp/10, 1) );
   js.Var("on",   (digitalRead(HEAT)==LOW) ? 1:0 );
   js.Var("temp", String((float)roomTemp/10, 1) );
   js.Var("rh",   String((float)rh/10, 1) );
-  js.Var("tc",   String(currCost(), 3) );
-  js.Var("wh",   String(currWatts(), 1) );
-  js.Var("l",   light);
-
+  js.Var("c",    String((bCF) ? "C":"F"));
+  js.Var("mot",  bMotion);
+  js.Var("eta",  nHeatETA);
   return js.Close();
 }
 
 String setJson() // settings
 {
-  jsonString js;
+  jsonString js("set");
 
   js.Var("vt", String((float)ee.vacaTemp/10, 1) );
   js.Var("o",   ee.bEnableOLED);
@@ -179,9 +168,10 @@ String setJson() // settings
   js.Var("r",  ee.rate);
   js.Var("e",  ee.bEco);
   js.Array("item", ee.schedule, 8);
-  js.ArrayCost("tc", ee.costs, 12);
-  js.Array("tw", ee.wh, 12);
-
+  ee.tSecsMon[month()-1] += onCounter;
+  onCounter = 0;
+  js.Array("ts", ee.tSecsMon, 12);
+  js.Array("ppkwm", ee.ppkwm, 12);
   return js.Close();
 }
 
@@ -194,7 +184,7 @@ void parseParams(AsyncWebServerRequest *request)
 {
   static char temp[256];
   char password[64];
-  int val;
+  int16_t val;
 
  if(request->params() == 0)
     return;
@@ -214,7 +204,7 @@ void parseParams(AsyncWebServerRequest *request)
 
   uint32_t ip = request->client()->remoteIP();
 
-  if(strcmp(controlPassword, password))
+  if(strcmp(controlPassword, password) || nWrongPass)
   {
     if(nWrongPass == 0)
       nWrongPass = 10;
@@ -293,11 +283,10 @@ void parseParams(AsyncWebServerRequest *request)
         wifi.setPass();
         break;
       case 'c': // restore the month's total (in cents) after updates
-        ee.fTotalCost = (float)val / 100;
         break;
       case 'w': // restore the month's total (in watthours) after updates
-        ee.fTotalWatts = (float)val;
         break;
+#ifdef VIBE
       case 'v': // vibe
         {
           int n = s.indexOf(",");
@@ -311,7 +300,8 @@ void parseParams(AsyncWebServerRequest *request)
         pinMode(VIBE, OUTPUT);
         digitalWrite(VIBE, LOW);
         break;
-      case 't': // tadj[1] (for room temp)
+#endif
+      case 't': // tadj (for room temp)
         ee.tAdj[1] = constrain(val, -200, 200);
         break;
     }
@@ -416,20 +406,23 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           break;
         case 4: // cnt
           ee.schedCnt = constrain(iValue, 1, 8);
-          ws.textAll(String("set;") + setJson()); // update all the entries
+          ws.textAll(setJson()); // update all the entries
           break;
         case 5: // tadj
           changeTemp(iValue, false);
-          ws.textAll(String("set;") + setJson()); // update all the entries
+          ws.textAll(setJson()); // update all the entries
           break;
         case 6: // ppkw
-          ee.ppkwh = iValue;
+          ee.ppkwm[month()-1] = ee.ppkwh = iValue;
           break;
         case 7: // vaca
           ee.bVaca = iValue;
           break;
         case 8: // vacatemp
-          ee.vacaTemp = constrain( (int)(atof(psValue)*10), 600, 840); // 60-84F
+          if(bCF)
+            ee.vacaTemp = constrain( (int)(atof(psValue)*10), 100, 290); // 10-29C
+          else
+            ee.vacaTemp = constrain( (int)(atof(psValue)*10), 600, 840); // 60-84F
           break;
         case 9: // I
           item = iValue;
@@ -463,29 +456,33 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           toneCnt = 1;
           break;
        case 16: // vibe (vibe period)
+#ifdef VIBE
           vibePeriod = iValue;
           vibeCnt = 1;
           pinMode(VIBE, OUTPUT);
           digitalWrite(VIBE, LOW);
+#endif
           break;
         case 17: // watts
           ee.watts = iValue;
           break;
         case 18: // dot displayOnTimer
-          if((displayOnTimer ==0 ) && (displayOnTimer = iValue))
+          if((displayOnTimer == 0) && (ee.bEnableOLED == false) && iValue)
           {
             bStartDisplay = true;
           }
+          displayOnTimer = iValue;
           break;
         case 19: // save
           updateAll(true);
           break;
         case 20: // aadj
           changeTemp(iValue, true);
-          ws.textAll(String("set;") + setJson()); // update all the entries
+          ws.textAll(setJson()); // update all the entries
           break;
         case 21: // eco
           ee.bEco = iValue ? true:false;
+          setHeat();
           break;
       }
       break;
@@ -505,9 +502,9 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
         bRestarted = false;
         client->text("alert;Restarted");
       }
-      s = String("state;") + dataJson().c_str();
+      s = dataJson();
       client->text(s);
-      s = String("set;") + setJson().c_str();
+      s = setJson();
       client->text(s);
       client->ping();
       break;
@@ -529,7 +526,7 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
           if(pCmd == NULL || pData == NULL) break;
           bKeyGood = false; // for callback (all commands need a key)
           jsonParse.process(pCmd, pData);
-          ws.textAll(String("set;") + setJson()); // update the page settings
+          ws.textAll(setJson()); // update the page settings
         }
       }
       break;
@@ -547,7 +544,10 @@ void setup()
   pinMode(BTN_1, INPUT_PULLUP);
 #endif
 
-  pinMode(BTN_2, INPUT_PULLUP);  // IO0 needs external WPU
+#ifdef MOTION_PIN
+  pinMode(MOTION_PIN, INPUT);
+#endif
+  pinMode(BTN_2, INPUT);  // IO0 needs external WPU
   pinMode(TONE, OUTPUT);
   digitalWrite(TONE, LOW);
   pinMode(BTN_UP, INPUT_PULLUP);
@@ -585,16 +585,15 @@ void setup()
   {
     if(wifi.isCfg())
       request->send( 200, "text/html", wifi.page() ); // WIFI config page
-  });
-
-  server.on ( "/iot", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request) // Main webpage interface
-  {
-    parseParams(request);
-    #ifdef USE_SPIFFS
-      request->send(SPIFFS, "/index.htm");
-    #else
-      request->send_P(200, "text/html", index_page);
-    #endif
+    else
+    {
+      parseParams(request);
+      #ifdef USE_SPIFFS
+        request->send(SPIFFS, "/index.htm");
+      #else
+        request->send_P(200, "text/html", index_page);
+      #endif
+    }
   });
   server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
   server.on ( "/set", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -685,6 +684,7 @@ void setup()
   ArduinoOTA.begin();
   ArduinoOTA.onStart([]() {
     digitalWrite(HEAT, HIGH);
+    ee.tSecsMon[month()-1] += onCounter;
     updateAll( true );
   });
 #endif
@@ -714,22 +714,23 @@ void setup()
   if(wifi.isCfg() == false)
   {
     utime.start();
-    MDNS.addService("http", "tcp", serverPort);
+    MDNS.addService("iot", "tcp", serverPort);
   }
 
+  am.begin(SDA, SCL);
   Tone(2600, 200);
   bStartDisplay = ee.bEnableOLED;
 }
 
-uint16_t ssCnt = 30;
-
+uint8_t ssCnt = 30;
+uint8_t motCnt;
+ 
 void loop()
 {
   static RunningMedian<uint16_t,24> tempMedian[2];
-  static RunningMedian<uint16_t,8> lightMedian;
+//  static RunningMedian<uint16_t,8> lightMedian;
   static uint8_t min_save, sec_save, mon_save = 0;
   static bool bLastOn;
-  static bool bSkip;
 
   MDNS.update();
 #ifdef OTA_ENABLE
@@ -747,6 +748,7 @@ void loop()
       delay(tonePeriod);
   }
 
+#ifdef VIBE
   if(vibeCnt)
   {
     delay(vibePeriod);
@@ -758,6 +760,21 @@ void loop()
       digitalWrite(VIBE, LOW);
     }
   }
+#endif
+
+#ifdef MOTION_PIN
+  if(digitalRead(MOTION_PIN) != bMotion)
+  {
+    bMotion = digitalRead(MOTION_PIN);
+    if(bMotion)
+    {
+      sendState();
+      if(ee.bEnableOLED == false && displayOnTimer == 0)
+        bStartDisplay = true;
+      displayOnTimer = 60;
+    }
+  }
+#endif
 
   if(bStartDisplay)
   {
@@ -794,28 +811,27 @@ void loop()
         }
         if( mon_save != month() )
         {
-          if(mon_save) // first hour after start hour
-          {
-            ee.costs[mon_save-1] = ee.fTotalCost * 100; // f dollars to dec cents at the end of the month
-            ee.fTotalCost = 0;
-            ee.wh[mon_save-1] = ee.fTotalWatts; // save watt hours used at the end of the month
-            ee.fTotalWatts = 0;
-          }
           mon_save = month();
+          ee.tSecsMon[mon_save-1] = 0;
         }
         addLog();
         if( updateAll(false) )      // update EEPROM if changed
-          ws.textAll("print; EE updated");
+          ws.textAll("print;EEPROM updated");
       }
       if(min_save == 30)
         addLog(); // half hour log
 
       float temp2, rh2;
+
       if(am.measure(temp2, rh2))
       {
         float newtemp, newrh;
 
-        tempMedian[0].add( (1.8 * temp2 + 32.0) * 10 );
+        if(bCF == false)
+          temp2 = (1.8 * temp2 + 32.0);
+        temp2 *= 10;
+        temp2 += ee.tAdj[1]; // calibrated temp value
+        tempMedian[0].add( temp2 );
         tempMedian[0].getAverage(2, newtemp);
         tempMedian[1].add(rh2 * 10);
         tempMedian[1].getAverage(2, newrh);
@@ -827,44 +843,75 @@ void loop()
         }
       }else
       {
-        String s;
+/*        String s;
         s = "print;AM2320 error ";
-        s += bHeater;
-        ws.textAll(s);
+        s += am.code;
+        s += " CRC=";
+        s += String(am.crc, HEX);
+        s += " ";
+        uint8_t buf[9];
+        am.getbuf(buf);
+        s += String(buf[0], HEX);
+        s += " ";
+        s += String(buf[1], HEX);
+        s += " ";
+        s += String(buf[2], HEX);
+        s += " ";
+        s += String(buf[3], HEX);
+        s += " ";
+        s += String(buf[4], HEX);
+        s += " ";
+        s += String(buf[5], HEX);
+        s += " ";
+        s += String(buf[6], HEX);
+        s += " ";
+        s += String(buf[7], HEX);
+        ws.textAll(s);*/
       }
-    
     }
 
     if(displayOnTimer) displayOnTimer --;
     if(nWrongPass)    nWrongPass--;
-    if(digitalRead(HEAT) == LOW) onCounter++;
+    if(digitalRead(HEAT) == LOW)
+      onCounter++;
+    else if(onCounter)
+    {
+      ee.tSecsMon[month()-1] += onCounter;
+      onCounter = 0;
+    }
+
+    if(bHeater)
+      nHeatCnt++;
+    else
+      nCoolCnt++;
+    if(nHeatETA)
+      nHeatETA--;
 
     static uint16_t s = 1;
     if(ee.bEco && bHeater) // eco mode
     {
-      bool bBoost = (currentTemp < loTemp - 10); // > 1.0 deg = full power
+      bool bBoost = (currentTemp < loTemp - ee.pids[2]); // 0.5 deg diff
       if(bBoost == false)
       {
         if(--s == 0)
         {
-          s = 60; // turn on/off every 60 seconds
-          digitalWrite(HEAT, !digitalRead(HEAT));
+          bool bOff = digitalRead(HEAT);
+          s = (bOff) ? ee.pids[1] : ee.pids[0]; // off 60 secs /on 180 secs (75%)
+          digitalWrite(HEAT, !bOff);
         }
       }
     }
 
     if(bHeater != bLastOn || onCounter > (60*60*12)) // total up when it turns off or before 32 bit carry error
     {
-      if(bLastOn)
-      {
-        updateAll( false );
-      }
-      bLastOn = bHeater;
+      ee.tSecsMon[month()-1] += onCounter;
       onCounter = 0;
+      if(bLastOn)
+        updateAll( false );
+      bLastOn = bHeater;
     }
-
   }
-
+/*
   static int lgTime;
   if(millis() - lgTime >= 100)
   {
@@ -872,92 +919,86 @@ void loop()
     uint16_t newLight;
     lightMedian.add( analogRead(0) );
     lightMedian.getMedian(newLight);
-    if(newLight > light + 1) // light increased
+    if(newLight > light + 5) // light increased
+    {
+//      if(ee.bEnableOLED == false && displayOnTimer == 0)
+//        bStartDisplay = true;
       displayOnTimer = 30;
+    }
     light = newLight;
   }
-
+*/
   if(wifi.isCfg())
     return;
-  if(bSkip){bSkip = false; return;}
  
   // Draw screen
   static bool blnk;
   static long last;
-  static bool bClear;
 
-  if(bClear && !(ee.bEnableOLED || displayOnTimer))
-    return;
   // draw the screen here
   display.clear();
 
-  if(ee.bEnableOLED || displayOnTimer) // draw only ON indicator if screen off
+  if(ee.bEnableOLED == false && displayOnTimer == 0)
   {
-    String s;
-
-    bClear = false;
-
-    if(sMessage.length()) // message sent over wifi
-    {
-      s = sMessage; // custom message
-      if(msgCnt == 0) // starting
-        msgCnt = 3; // times to repeat message
-    }
-    else
-    {
-      s = timeFmt(true, true); // the default scroller
-      s += "  ";
-      s += days[weekday()-1];
-      s += " ";
-      s += String(day());
-      s += " ";
-      s += months[month()-1];
-      s += "  ";
-      s += sDec(roomTemp);
-      s += "]F "; // <- that's a degree symbol
-      s += sDec(rh);
-      s += "% ";
-    }
-
-    Scroller(s);
-    static uint16_t x[2] = {0, 64};
-
-    if(minute()&1)
-      x[0] = 64, x[1] = 0;
-    else
-      x[0] = 0, x[1] = 64;
- 
-    display.setFontScale2x2(false); // the small text
-    display.drawString(x[0]+ 9, 22, "Temp");
-    display.drawString(x[1]+19, 22, "Set");
-    const char *ps = ee.bVaca ? "Vacation" : ee.schedule[schInd].name;
-    display.drawString(x[1]+32-(strlen(ps) << 2), 55, ps);
-
-    String temp = sDec(currentTemp) + "]"; // <- that's a degree symbol
-    display.drawPropString(x[0]+2, 33, temp );
-    temp = sDec( hiTemp ) + "]";
-    display.drawPropString(x[1]+10, 33, temp );
-
-    if(bHeater)
-    {
-      if( (millis() - last) > 400) // 400ms toggle for blinker
+    if(bHeater)  // small strobe dot when display is off
+    {  if(second() != last)
       {
-        last = millis();
-        blnk = !blnk;
+        display.drawString( (second()<<1) + (minute()&1), minute()%30, ".");
+        last = second();
       }
-      if(blnk)
-        display.drawString(x[0]+1, 55, "Heat");
     }
+    display.display();
+    return;
   }
-  else if(bHeater)  // small strobe dot when display is off
+
+  String s;
+
+  if(sMessage.length()) // message sent over wifi
   {
-    if(second() != last)
-    {
-      display.drawString( (second()<<1) + (minute()&1), minute()%30, ".");
-      last = second();
-    }
+    s = sMessage; // custom message
+    if(msgCnt == 0) // starting
+      msgCnt = 3; // times to repeat message
   }
-  else bClear = true; // display has been cleared
+  else
+  {
+    s = timeFmt(true, true); // the default scroller
+    s += "  ";
+    s += days[weekday()-1]; s += " ";
+    s += String(day()); s += " ";
+    s += months[month()-1]; s += "  ";
+    s += sDec(roomTemp); s += "]F "; // <- that's a degree symbol
+    s += sDec(rh); s += "% ";
+  }
+
+  Scroller(s);
+  static uint16_t x[2] = {0, 64};
+
+  if(minute()&1)
+    x[0] = 64, x[1] = 0;
+  else
+    x[0] = 0, x[1] = 64;
+
+  display.setFontScale2x2(false); // the small text
+  display.drawString(x[0]+ 9, 22, "Temp");
+  display.drawString(x[1]+19, 22, "Set");
+  const char *ps = ee.bVaca ? "Vacation" : ee.schedule[schInd].name;
+  display.drawString(x[1]+32-(strlen(ps) << 2), 55, ps);
+
+  String temp = sDec(currentTemp) + "]"; // <- that's a degree symbol
+  display.drawPropString(x[0]+2, 33, temp );
+  temp = sDec( hiTemp ) + "]";
+  display.drawPropString(x[1]+10, 33, temp );
+
+  if(bHeater)
+  {
+    if( (millis() - last) > 400) // 400ms toggle for blinker
+    {
+      last = millis();
+      blnk = !blnk;
+    }
+    if(blnk)
+      display.drawString(x[0]+1, 55, "Heat");
+  }
   display.display();
 }
 
@@ -1041,6 +1082,8 @@ void setHeat()
 void checkTemp()
 {
   static RunningMedian<uint16_t,32> tempMedian;
+  static RunningMedian<uint32_t,8> heatTimeMedian;
+//  static RunningMedian<uint32_t,8> coolTimeMedian;
   static uint8_t state = 0;
 
   switch(state)
@@ -1078,7 +1121,6 @@ void checkTemp()
   {
     bHeater = false;
     setHeat();
-    ws.textAll("alert;Invalid CRC");
     return;
   }
 
@@ -1089,8 +1131,10 @@ void checkTemp()
     return;
   }
 
-// tempMedian.add(( raw * 625) / 1000 );  // to 10x celcius
-  tempMedian.add( (raw * 1125) / 1000 + 320) ; // 10x fahrenheit
+  if(bCF)
+    tempMedian.add(( raw * 625) / 1000 );  // to 10x celcius
+  else
+    tempMedian.add( (raw * 1125) / 1000 + 320) ; // 10x fahrenheit
 
   float t;
   tempMedian.getAverage(2, t);
@@ -1099,6 +1143,39 @@ void checkTemp()
   static uint16_t oldHT;
   if(newTemp != currentTemp || hiTemp != oldHT)
   {
+    if(currentTemp != newTemp && currentTemp)
+    {
+      if(bHeater)
+      {
+        int16_t chg = newTemp - currentTemp;
+        uint16_t tDiff = hiTemp - newTemp;
+        if(nHeatCnt > 500 && chg > 0)
+        {
+          heatTimeMedian.add(nHeatCnt);
+          float fCt;
+          heatTimeMedian.getAverage(fCt);
+          uint32_t ct = fCt;
+          nHeatETA = ct * tDiff;
+          nHeatCnt = 0;
+        }
+      }
+      else
+      {
+/*
+        int16_t chg = currentTemp - newTemp;
+        uint16_t tDiff = newTemp - loTemp;
+        if(nCoolCnt > 500 && chg > 0)
+        {
+          coolTimeMedian.add(nCoolCnt);
+          float fCt;
+          coolTimeMedian.getAverage(fCt);
+          uint32_t ct = fCt;
+          uint32_t eta = ct * tDiff;
+          nCoolCnt = 0;
+        }
+*/
+      }
+    }
     currentTemp = newTemp;
     oldHT = hiTemp;
     sendState();
@@ -1114,15 +1191,33 @@ void checkTemp()
   else if(currentTemp >= hiTemp && bHeater == true)
   {
     bHeater = false;
+    nHeatETA = 0;
     setHeat();
     sendState();
     addLog();
   }
 }
 
+String timeFmt(uint32_t v)
+{
+  String s;
+  uint32_t m = v / 60;
+  uint8_t h = m / 60;
+  m %= 60;
+  v %= 60;
+  s += h;
+  s += ":";
+  if(m < 10) s += "0";
+  s += m;
+  s += ":";
+  if(v < 10) s += "0";
+  s += v;
+  return s;
+}
+
 void sendState()
 {
-  ws.textAll(String("state;") + dataJson() );
+  ws.textAll( dataJson() );
   ssCnt = ee.rate;
 }
 
@@ -1156,8 +1251,10 @@ void checkButtons()
         if (bState[i] == LOW) // pressed
         {
           if(ee.bEnableOLED == false && displayOnTimer == 0) // skip first press with display off
+          {
+            bStartDisplay = true;
             displayOnTimer = 30;
-          else
+          }else
             bInvoke = true;
           lRepeatMillis = millis(); // initial increment (doubled)
           bRepeat = false;
@@ -1188,13 +1285,13 @@ void checkButtons()
         else
           changeTemp(-1, true);
         break;
-      case 2: // left top button
-        if(displayOnTimer)
-          displayOnTimer = 0;
-        else
-          displayOnTimer = 30;
+      case 2: // right top button
+//        if(displayOnTimer)
+//          displayOnTimer = 0;
+//        else
+//          displayOnTimer = 30;
         break;
-      case 3: // right top button
+      case 3: // left top button
         ee.bEnableOLED = !ee.bEnableOLED;
         if(ee.bEnableOLED)
           bStartDisplay = true;
@@ -1230,7 +1327,10 @@ void checkLimits()
 {
   for(int i = 0; i < ee.schedCnt; i++)
   {
-    ee.schedule[i].setTemp = constrain(ee.schedule[i].setTemp, 600, 900); // sanity check (60~90)
+    if(bCF)
+      ee.schedule[i].setTemp = constrain(ee.schedule[i].setTemp, 155, 322); // sanity check (60~90)
+    else
+      ee.schedule[i].setTemp = constrain(ee.schedule[i].setTemp, 600, 900); // sanity check (60~90)
     ee.schedule[i].thresh = constrain(ee.schedule[i].thresh, 1, 100); // (50~80)
   }
 }
