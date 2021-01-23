@@ -104,6 +104,21 @@ public:
     m_cnt++;
   }
 
+  void Array(char *key, uint32_t iVal[], int n)
+  {
+    if(m_cnt) s += ",";
+    s += "\"";
+    s += key;
+    s += "\":[";
+    for(int i = 0; i < n; i++)
+    {
+      if(i) s += ",";
+      s += iVal[i];
+    }
+    s += "]";
+    m_cnt++;
+  }
+
  // custom arrays for waterbed
   void Array(char *key, Sched sVal[], int n)
   {
