@@ -40,14 +40,14 @@ struct eeSet // EEPROM backed data
   uint16_t ppkwh;
   uint16_t rate;
   uint16_t watts;
-  uint16_t costs[12];
-  uint16_t wh[12];    // watt hours per month
-  uint16_t tAdj[2];
+  uint16_t ppkwm[12];
+  uint32_t tSecsMon[12];    // total secwatt hours per month
+  int16_t tAdj[2];
+  int16_t pids[3];
+  int8_t res[8];
   Alarm   alarm[MAX_SCHED];
 // end of CRC
   uint16_t lightLevel[2];
-  float   fTotalCost;
-  float   fTotalWatts;
 };
 
 class eeMem
