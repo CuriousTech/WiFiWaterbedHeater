@@ -1,32 +1,53 @@
-﻿<!DOCTYPE html><html lang="en">
+<!DOCTYPE html><html lang="en">
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>WiFi Waterbed Heater</title>
 <style type="text/css">
-table,input{
+table{
+border-radius: 2px;
+box-shadow: 2px 2px 12px #000000;
+background-image: -moz-linear-gradient(top, #f0f0f0, #506090);
+background-image: -ms-linear-gradient(top, #f0f0f0, #506090);
+background-image: -o-linear-gradient(top, #f0f0f0, #506090);
+background-image: -webkit-linear-gradient(top, #f0f0f0, #506090);
+background-image: linear-gradient(top, #f0f0f0, #506090);
+background-clip: padding-box;
+}
+input{
 border-radius: 5px;
 box-shadow: 2px 2px 12px #000000;
-background-image: -moz-linear-gradient(top, #dfffff, #5050ff);
-background-image: -ms-linear-gradient(top, #dfffff, #5050ff);
-background-image: -o-linear-gradient(top, #dfffff, #5050ff);
-background-image: -webkit-linear-gradient(top, #dfffff, #5050ff);
-background-image: linear-gradient(top, #dfffff, #5050ff);
+background-image: -moz-linear-gradient(top, #dfffff, #505050);
+background-image: -ms-linear-gradient(top, #dfffff, #505050);
+background-image: -o-linear-gradient(top, #dfffff, #505050);
+background-image: -webkit-linear-gradient(top, #dfffff, #505050);
+background-image: linear-gradient(top, #dfffff, #505050);
+background-clip: padding-box;
+}
+div{
+border-radius: 5px;
+box-shadow: 2px 2px 12px #000000;
+background-image: -moz-linear-gradient(top, #df9f0f, #f050ff);
+background-image: -ms-linear-gradient(top, #df9f0f, #f050ff);
+background-image: -o-linear-gradient(top, #df9f0f, #f050ff);
+background-image: -webkit-linear-gradient(top, #f0a040, #505050);
+background-image: linear-gradient(top, #df9f0f, #f050ff);
 background-clip: padding-box;
 }
 body{width:300px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}
 </style>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js" type="text/javascript" charset="utf-8"></script>
 <script type="text/javascript" src="data"></script>
 <script type="text/javascript">
-// src="http://192.168.0.116/data"
-ms=Array('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec')
+// src="http://192.168.31.86/data"
 a=document.all
 oledon=0
 avg=1
 cnt=1
 eco=0
+cf='F'
 function openSocket(){
 ws=new WebSocket("ws://"+window.location.host+"/ws")
-//ws=new WebSocket("ws://192.168.0.116/ws")
+//ws=new WebSocket("ws://192.168.31.158/ws")
 ws.onopen=function(evt) { }
 ws.onclose=function(evt) { alert("Connection closed."); }
 ws.onmessage=function(evt) {
@@ -40,11 +61,13 @@ console.log(evt.data)
   dt=new Date(d.t*1000)
   a.time.innerHTML=dt.toLocaleTimeString()
   waterTemp=+d.waterTemp
-  a.temp.innerHTML=d.waterTemp+'&degF'
-  a.on.innerHTML=(d.on?"<font color='red'><b>":"")+d.hiTemp+"&degF"+(d.on?"</b></font>":"")
-  a.rt.innerHTML=+d.temp+'&degF'
+  a.temp.innerHTML=(d.on?"<font color='red'><b>":"")+waterTemp+"&deg"+cf+(d.on?"</b></font>":"")
+  a.tgt.innerHTML="> "+d.hiTemp+"&deg"+cf
+  a.rt.innerHTML=+d.temp+'&deg'+cf
   a.rh.innerHTML=+d.rh+'%'
-  a.tc.innerHTML='$'+d.tc
+  eta=+d.eta
+//  if(eta==0) eta=+d.cooleta
+  a.eta.innerHTML='ETA '+t2hms(eta)
  }
  else if(event=='set')
  {
@@ -55,11 +78,12 @@ console.log(evt.data)
   avg=d.avg
   a.AVG.value=avg?'ON ':'OFF'
   a.tz.value=d.tz
-  ppkw=d.ppkwh/10000
+  ppkw=d.ppkwh/1000
   a.K.value=ppkw
   a.vo.value=d.vo?'ON ':'OFF'
   a.eco.value=d.e?'ON ':'OFF'
-  watts=a.w
+  eco=d.e
+  watts=d.w
   cnt=d.cnt
   idx=d.idx
   itms=d.item
@@ -73,21 +97,14 @@ console.log(evt.data)
    document.getElementById('S'+i).value=h+':'+m
    document.getElementById('T'+i).value=itms[i][2]
    document.getElementById('H'+i).value=itms[i][3]
+   document.getElementById('N'+i).onchange=function(){onChangeSched(this)}
+   document.getElementById('S'+i).onchange=function(){onChangeSched(this)}
+   document.getElementById('T'+i).onchange=function(){onChangeSched(this)}
+   document.getElementById('H'+i).onchange=function(){onChangeSched(this)}
   }
   a.inc.value=Math.min(8,cnt+1)
   a.dec.value=Math.max(1,cnt-1)
-  for(i=0;i<12;i++)
-  {
-   s = ms[i]+' $'+d.tc[i]
-   if((i%3)==0) s+=' &nbsp &nbsp '
-   document.getElementById('tm'+i).innerHTML=s
-  }
-  tot=0
-  for(i=0;i<12;i++)
-   tot+=+d.tc[i]
-  a.tot.innerHTML='Year: $'+tot.toFixed(2)+' &nbsp '
-  dt=new Date()
-  a.m.innerHTML=ms[dt.getMonth()]+' '+dt.getDate()+':'
+  draw_bars(d.ts,d.ppkwm)
   draw()
  }
  else if(event=='alert')
@@ -95,6 +112,20 @@ console.log(evt.data)
   alert(data)
  }
 }
+}
+function onChangeSched(ent)
+{
+ id=ent.id.substr(0,1)
+ idx=ent.id.substr(1)
+ val=ent.value
+ if(id=='S')
+ {
+	tm=val.split(':')
+	val=(+tm[0]*60)+(+tm[1])
+ }
+ setVar('I',idx)
+ setVar(id,val)
+ draw()
 }
 function setVar(varName, value)
 {
@@ -128,38 +159,7 @@ cnt+=n
 setVar('cnt',cnt)
 }
 function setPPK(){
-setVar('ppkwh',(a.K.value*10000).toFixed())
-}
-
-function save()
-{
-  for(i=0;i<8;i++)
-  {
-   sv=false
-   if(itms[i][0]!=document.getElementById('N'+i).value) sv=true
-   tm=document.getElementById('S'+i).value.split(':')
-   tm=(tm[0]*60+(+tm[1]))
-   if(itms[i][1]!=tm) sv=true
-   if(itms[i][2]!=document.getElementById('T'+i).value) sv=true
-   if(itms[i][3]!=document.getElementById('H'+i).value) sv=true
-   if(sv)
-   {
-    itms[i][0]=document.getElementById('N'+i).value
-    itms[i][1]=tm
-    itms[i][2]=document.getElementById('T'+i).value
-    itms[i][3]=document.getElementById('H'+i).value
-
-    s='cmd;{"key":"'+a.myKey.value+'","I":'+i
-    s+=',"N":"'+itms[i][0]+'"'
-    s+=',"S":'+itms[i][1]
-    s+=',"T":'+itms[i][2]
-    s+=',"H":'+itms[i][3]
-    s+='}'
-    ws.send(s)
-   }
-  }
-  draw()
-  setVar('save',0)
+setVar('ppkwh',(a.K.value*1000).toFixed())
 }
 
 var x,y,llh=0,llh2=0
@@ -167,7 +167,7 @@ function draw(){
 try {
   c2 = document.getElementById('canva')
   ctx = c2.getContext("2d")
-  ctx.fillStyle = "#88F" // bg
+  ctx.fillStyle = "#88f" // bg
   ctx.fillRect(0,0,c2.width,c2.height)
 
   ctx.font = "bold 11px sans-serif"
@@ -198,7 +198,10 @@ try {
 	x=0
   	linePos(th1) // thresh at midnight
 	ctx.closePath()
-	ctx.fillStyle = "rgba(80,80,80,0.5)" // thresholds
+	if(a.vo.value=='ON ')
+		ctx.fillStyle = "rgba(130,130,130,0.3)" // thresholds (not active)
+	else
+		ctx.fillStyle = "rgba(80,80,80,0.5)" // thresholds
 	ctx.fill()
 	ctx.fillStyle = "#000" // temps
 	for(i=0;i<cnt;i++){
@@ -215,7 +218,10 @@ try {
 		y2=t2y(itms[i][2]-itms[i][3])-y // thresh
 		if(i==cnt-1) x2=c2.width-x
 		else x2=tm2x(itms[i+1][1])-x
-		ctx.fillStyle = "rgba(80,80,80,0.5)" // thresh
+		if(a.vo.value=='ON ')
+			ctx.fillStyle = "rgba(130,130,130,0.3)" // thresh
+		else
+			ctx.fillStyle = "rgba(80,80,80,0.5)" // thresh
 		ctx.fillRect(x, y, x2, y2)
 		ctx.fillStyle = "#000" // temp
 		ctx.fillText(itms[i][2], x, y-2)
@@ -223,6 +229,14 @@ try {
 	x0=tm2x(itms[0][1])
 	ctx.fillStyle = "#666"
 	ctx.fillRect(0, y, x0, y2) // rollover midnight
+  }
+
+  if(a.vo.value=='ON ')
+  {
+	ctx.fillStyle = "rgba(90,90,90,0.5)" // vacation thresh
+	y=t2y(+a.vt.value)
+	y2=t2y(+a.vt.value-1)
+	ctx.fillRect(0, y, c2.width, y2)
   }
 
   ctx.fillStyle = "#000" // temps
@@ -236,7 +250,7 @@ try {
   ctx.fillText(hi,0,10)
   ctx.fillText(lo,0,c2.height)
   hl=hi-lo
-  ctx.strokeStyle = "rgba(13,13,13,0.5)" // h-lines
+  ctx.strokeStyle = "rgba(13,13,13,0.1)" // h-lines
   step=c2.height/hl
   ctx.beginPath()
   for(y=step,n=hi-1;y<c2.height;y+= step){  // vertical lines
@@ -346,18 +360,176 @@ function getLoHi()
   lo=Math.floor(lo)
   hi=Math.ceil(hi)
 }
+function draw_bars(ar,pp)
+{
+    graph = $('#graph')
+	var c=document.getElementById('graph')
+	rect=c.getBoundingClientRect()
+	canvasX=rect.x
+	canvasY=rect.y
+
+    tipCanvas=document.getElementById("tip")
+    tipCtx=tipCanvas.getContext("2d")
+    tipDiv=document.getElementById("popup")
+
+	ctx=c.getContext("2d")
+	ctx.fillStyle="#FFF"
+	ctx.font="10px sans-serif"
+	ctx.lineCap="round"
+
+    dots=[]
+    date=new Date()
+	ht=c.height
+	ctx.lineWidth=10
+	draw_scale(ar,pp,c.width-4,ht-2,2,1,date.getMonth())
+
+	// request mousemove events
+	graph.mousemove(function(e){handleMouseMove(e);})
+
+	// show tooltip when mouse hovers over dot
+	function handleMouseMove(e){
+		rect=c.getBoundingClientRect()
+		mouseX=e.clientX-rect.x
+		mouseY=e.clientY-rect.y
+		var hit = false
+		for(i=0;i<dots.length;i++){
+			dot=dots[i]
+			if(mouseX>=dot.x && mouseX<=dot.x2 && mouseY>=dot.y && mouseY<=dot.y2){
+				tipCtx.clearRect(0,0,tipCanvas.width,tipCanvas.height)
+				tipCtx.fillStyle="#000000"
+				tipCtx.strokeStyle='#333'
+				tipCtx.font='italic 8pt sans-serif'
+				tipCtx.textAlign="left"
+				tipCtx.fillText(dot.tip, 4,15)
+				tipCtx.fillText(dot.tip2,4,29)
+				tipCtx.fillText(dot.tip3,4,44)
+				popup=document.getElementById("popup")
+				popup.style.top =(dot.y)+"px"
+				x=dot.x-60
+				if(x<10)x=10
+				popup.style.left=x+"px"
+				hit=true
+			}
+		}
+		if(!hit){popup.style.left="-1000px"}
+	}
+
+	function getMousePos(cDom, mEv){
+		rect = cDom.getBoundingClientRect();
+		return{
+		 x: mEv.clientX-rect.left,
+		 y: mEv.clientY-rect.top
+		}
+	}
+}
+
+function draw_scale(ar,pp,w,h,o,p,ct)
+{
+	ctx.fillStyle="#336"
+	ctx.fillRect(2,o,w,h-3)
+	ctx.fillStyle="#FFF"
+	max=0
+	tot=0
+	costTot=0
+	for(i=0;i<ar.length;i++)
+	{
+		if(ar[i]>max) max=ar[i]
+		tot+=ar[i]
+	}
+	ctx.textAlign="center"
+	lw=ctx.lineWidth
+	clr='#55F'
+	mbh=0
+	bh=0
+	for(i=0;i<ar.length;i++)
+	{
+		x=i*(w/ar.length)+4+ctx.lineWidth
+		ctx.strokeStyle='#55F'
+		if(ar[i]){
+	    	bh=ar[i]*(h-28)/max
+	    	y=(o+h-20)-bh
+			ctx.beginPath()
+	    	ctx.moveTo(x,o+h-22)
+	    	ctx.lineTo(x,y)
+			ctx.stroke()
+		}
+		ctx.strokeStyle="#FFF"
+		ctx.fillText(i+p,x,o+h-7)
+
+		if(i==ct)
+		{
+			ctx.strokeStyle="#000"
+			ctx.lineWidth=1
+			ctx.beginPath()
+		    ctx.moveTo(x+lw+1,o+h-2)
+		    ctx.lineTo(x+lw+1,o+1)
+			ctx.stroke()
+			ctx.lineWidth=lw
+		}
+		bh=+bh.toFixed()+5
+		x=+x.toFixed()
+		if(pp[i]==0) pp[i]=ppkw*1000
+		cost=+((pp[i]/1000)*ar[i]*(watts/3600000)).toFixed(2)
+		costTot+=cost
+		if(ar[i])
+		  dots.push({
+			x: x-lw/2,
+			y: (o+h-20)-bh,
+			y2: (o+h),
+			x2: x+lw/2,
+			tip: t2hms(ar[i]),
+			tip2: '$'+cost,
+			tip3: '@ $'+pp[i]/1000
+		})
+	}
+	ctx.fillText((tot*watts/3600000).toFixed(1)+' KWh',w/2,o+10)
+	ctx.fillText('$'+costTot.toFixed(2),w/2,o+22)
+}
+function t2hms(t)
+{
+	s=t%60
+	t=Math.floor(t/60)
+	if(t==0) return s
+	if(s<10) s='0'+s
+	m=t%60
+	t=Math.floor(t/60)
+	if(t==0) return m+':'+s
+	if(m<10) m='0'+m
+	h=t%24
+	t=Math.floor(t/24)
+	if(t==0) return h+':'+m+':'+s
+	return t+'d '+h+':'+m+':'+s
+}
 </script>
+<style type="text/css">
+#wrapper {
+  width: 100%;
+  height: 100px;
+  position: relative;
+}
+#graph {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+#popup {
+  position: absolute;
+  top: -100px;
+  left: -1000px;
+  z-index: 10;
+}
+</style>
 </head>
 <body bgcolor="silver" onload="{
 key=localStorage.getItem('key')
 if(key!=null) document.getElementById('myKey').value=key
 openSocket()
 }">
-<h3>WiFi Waterbed Heater</h3>
+<h3 align="center">WiFi Waterbed Heater</h3>
 <table align=right>
-<tr><td align=center width=2><div id="time"></div></td><td><div id="temp"></div> </td><td align=center><div id="on"></div></td></tr>
-<tr><td align=center>Bedroom: </td><td><div id="rt"></div></td><td align="left"><div id="rh"></div> </td></tr>
-<tr><td colspan=2>TZ <input id='tz' type=text size=2 value='-5'><input value="Set" type='button' onclick="{setTZ()}"> &nbsp &nbsp </td>
+<tr><td align=center id="time"></td><td align=center><div id="temp"></div> </td><td align=center><div id="tgt"></div></td></tr>
+<tr><td align=center>Bedroom: </td><td align=center><div id="rt"></div></td><td align=center><div id="rh"></div> </td></tr>
+<tr><td id="eta"></td><td>TZ <input id='tz' type=text size=2 value='-5' onchange="{setTZ()}"></td>
 <td>Display:<input type="button" value="ON " id="OLED" onClick="{oled()}"></td></tr>
 <tr><td colspan=2>Vacation <input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick="{setVaca()}"> &nbsp &nbsp </td>
 <td>Avg: <input type="button" value="OFF" id="AVG" onClick="{setavg()}"></td></tr>
@@ -376,13 +548,13 @@ openSocket()
 <tr><td colspan=3 id='r6' style="display:none"><input id=N6 type=text size=12> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2></td></tr>
 <tr><td colspan=3 id='r7' style="display:none"><input id=N7 type=text size=12> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2></td></tr>
 <tr><td colspan=3><canvas id="canva" width="300" height="140" style="border:1px dotted;float:center" onclick="draw()"></canvas></td></tr>
-<tr height=32><td><div id='m'></div></td><td><div id='tc'>$0.00</div></td><td>$<input id='K' type=text size=2 value='0.1457'><input value="Set" type='button' onclick="{setPPK()}"></td></tr>
-<tr><td id='tm0'></td><td id='tm1'></td><td id='tm2'></td></tr>
-<tr><td id='tm3'></td><td id='tm4'></td><td id='tm5'></td></tr>
-<tr><td id='tm6'></td><td id='tm7'></td><td id='tm8'></td></tr>
-<tr><td id='tm9'></td><td id='tm10'></td><td id='tm11'></td></tr>
-<tr><td colspan=3 id='tot'></td></tr>
-<tr><td align="left"><input value="Save Changes" type='button' onclick="save();"></td><td colspan=2><input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 100px"><input type="button" value="Save" onClick="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
+<tr><td colspan=3>
+<div id="wrapper">
+<canvas id="graph" width="300" height="100"></canvas>
+<div id="popup"><canvas id="tip" width="70" height="48"></canvas></div>
+</div>
+</td></tr>
+<tr><td colspan=2 align="left">PPKWH $<input id='K' type=text size=2 value='0.1457' onchange="{setPPK()}"> </td><td> <input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 100px" onChange="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
 </table>
 </body>
 </html>
