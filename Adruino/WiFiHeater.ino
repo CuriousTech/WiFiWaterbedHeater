@@ -21,7 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-//#define SDEBUG
+#define SDEBUG
 //uncomment to enable Arduino IDE Over The Air update code
 #define OTA_ENABLE
 //#define USE_SPIFFS
@@ -30,7 +30,6 @@ SOFTWARE.
 #include <ssd1306_i2c.h> // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/ssd1306_i2c
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
-#include "WiFiManager.h"
 #include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
 #ifdef OTA_ENABLE
 #include <FS.h>
@@ -48,12 +47,12 @@ SOFTWARE.
 #include "eeMem.h"
 #include "RunningMedian.h"
 #include <JsonParse.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonParse
-#include <AM2320.h>
+#include <AM2320.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/AM2320
 #include "jsonstring.h"
 
 const char controlPassword[] = "password";    // device password for modifying any settings
 const int serverPort = 80;                    // HTTP port
-const char hostName[] = "Waterbed2";
+const char hostName[] = "Waterbed";
 
 #define BTN_2     0 // right top
 #define BTN_1     1 // left top
@@ -81,9 +80,12 @@ uint32_t nHeatCnt;
 uint32_t nCoolCnt;
 uint32_t nHeatETA;
 
-eeMem eemem;
+bool bConfigDone = false;
+bool bStarted = false;
+uint32_t connectTimer;
 
-WiFiManager wifi;  // AP page:  192.168.4.1
+eeMem ee;
+
 AsyncWebServer server( serverPort );
 AsyncWebSocket ws("/ws"); // access at ws://[esp ip]/ws
 
@@ -131,7 +133,7 @@ const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep
 
 bool updateAll(bool bForce)
 {
-  return eemem.update(bForce);
+  return ee.update(bForce);
 }
 
 String dataJson()
@@ -182,7 +184,6 @@ void ePrint(const char *s)
 
 void parseParams(AsyncWebServerRequest *request)
 {
-  static char temp[256];
   char password[64];
   int16_t val;
 
@@ -192,8 +193,8 @@ void parseParams(AsyncWebServerRequest *request)
   // get password first
   for ( uint8_t i = 0; i < request->params(); i++ ) {
     AsyncWebParameter* p = request->getParam(i);
-    p->value().toCharArray(temp, 100);
-    String s = wifi.urldecode(temp);
+    String s = request->urlDecode(p->value());
+
     switch( p->name().charAt(0)  )
     {
       case 'k': // key
@@ -225,8 +226,7 @@ void parseParams(AsyncWebServerRequest *request)
 
   for ( uint8_t i = 0; i < request->params(); i++ ) {
     AsyncWebParameter* p = request->getParam(i);
-    p->value().toCharArray(temp, 100);
-    String s = wifi.urldecode(temp);
+    String s = request->urlDecode(p->value());
 
     int which = p->name().charAt(1) - '0'; // limitation = 9
     if(which >= MAX_SCHED) which = MAX_SCHED - 1; // safety
@@ -273,14 +273,6 @@ void parseParams(AsyncWebServerRequest *request)
             toneCnt = constrain(s.toInt(), 1, 20);
           }
         }
-        break;
-      case 's':
-        s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
-        break;
-      case 'p':
-        s.toCharArray(ee.szSSIDPassword, sizeof(ee.szSSIDPassword));
-        updateAll( false );
-        wifi.setPass();
         break;
       case 'c': // restore the month's total (in cents) after updates
         break;
@@ -535,6 +527,8 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
 
 void setup()
 {
+  pinMode(HEAT, OUTPUT);
+  digitalWrite(HEAT, HIGH); // high is off
 #ifdef SDEBUG
   Serial.begin(115200);
   delay(100);
@@ -552,25 +546,26 @@ void setup()
   digitalWrite(TONE, LOW);
   pinMode(BTN_UP, INPUT_PULLUP);
   pinMode(BTN_DN, INPUT); // IO16 has external pullup
-  pinMode(HEAT, OUTPUT);
-  digitalWrite(HEAT, HIGH); // high is off
 
   // initialize dispaly
   display.init();
   display.flipScreenVertically();
 
   WiFi.hostname(hostName);
-  wifi.autoConnect(hostName, controlPassword); // Tries config AP, then starts softAP mode for config
-  if(!wifi.isCfg() == false)
+  WiFi.mode(WIFI_STA);
+
+  if ( ee.szSSID[0] )
   {
-    MDNS.begin ( hostName, WiFi.localIP() );
-#ifdef SDEBUG
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-#endif
+    WiFi.begin(ee.szSSID, ee.szSSIDPassword);
+    WiFi.setHostname(hostName);
+    bConfigDone = true;
   }
+  else
+  {
+    Serial.println("No SSID. Waiting for EspTouch.");
+    WiFi.beginSmartConfig();
+  }
+  connectTimer = now();
 
 #ifdef USE_SPIFFS
   SPIFFS.begin();
@@ -583,9 +578,9 @@ void setup()
 
   server.on ( "/", HTTP_GET, [](AsyncWebServerRequest *request)
   {
-    if(wifi.isCfg())
-      request->send( 200, "text/html", wifi.page() ); // WIFI config page
-    else
+//    if(wifi.isCfg())
+//      request->send( 200, "text/html", wifi.page() ); // WIFI config page
+//    else
     {
       parseParams(request);
       #ifdef USE_SPIFFS
@@ -628,9 +623,8 @@ void setup()
         json += js.Close();
       }
       WiFi.scanDelete();
-      if(WiFi.scanComplete() == -2){
+      if(WiFi.scanComplete() == -2)
         WiFi.scanNetworks(true);
-      }
     }
     json += "]";
     request->send(200, "text/json", json);
@@ -711,12 +705,6 @@ void setup()
  #endif
   }
 
-  if(wifi.isCfg() == false)
-  {
-    utime.start();
-    MDNS.addService("iot", "tcp", serverPort);
-  }
-
   am.begin(SDA, SCL);
   Tone(2600, 200);
   bStartDisplay = ee.bEnableOLED;
@@ -724,11 +712,10 @@ void setup()
 
 uint8_t ssCnt = 30;
 uint8_t motCnt;
- 
+
 void loop()
 {
   static RunningMedian<uint16_t,24> tempMedian[2];
-//  static RunningMedian<uint16_t,8> lightMedian;
   static uint8_t min_save, sec_save, mon_save = 0;
   static bool bLastOn;
 
@@ -737,9 +724,6 @@ void loop()
   ArduinoOTA.handle();
 #endif
   checkButtons();
-  if(!wifi.isCfg())
-    if(utime.check(ee.tz))
-      checkSched(true);  // initialize
 
   if(toneCnt)
   {
@@ -786,6 +770,45 @@ void loop()
   if(sec_save != second()) // only do stuff once per second
   {
     sec_save = second();
+
+    if(!bConfigDone)
+    {
+      if( WiFi.smartConfigDone())
+      {
+        Serial.println("SmartConfig set");
+        bConfigDone = true;
+        connectTimer = now();
+      }
+    }
+    if(bConfigDone)
+    {
+      if(WiFi.status() == WL_CONNECTED)
+      {
+        if(!bStarted)
+        {
+          Serial.println("WiFi Connected");
+          MDNS.begin( hostName );
+          bStarted = true;
+          utime.start();
+          MDNS.addService("iot", "tcp", serverPort);
+          WiFi.SSID().toCharArray(ee.szSSID, sizeof(ee.szSSID)); // Get the SSID from SmartConfig or last used
+          WiFi.psk().toCharArray(ee.szSSIDPassword, sizeof(ee.szSSIDPassword) );
+          updateAll(false);
+        }
+        if(utime.check(ee.tz))
+          checkSched(true);  // initialize
+      }
+      else if(now() - connectTimer > 10) // failed to connect for some reason
+      {
+        Serial.println("Connect failed. Starting SmartConfig");
+        connectTimer = now();
+        ee.szSSID[0] = 0;
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.beginSmartConfig();
+        bConfigDone = false;
+        bStarted = false;
+      }
+    }
 
     checkTemp();
 /*    static uint8_t am_cnt = 5;
@@ -841,32 +864,6 @@ void loop()
           rh = newrh;
           sendState();
         }
-      }else
-      {
-/*        String s;
-        s = "print;AM2320 error ";
-        s += am.code;
-        s += " CRC=";
-        s += String(am.crc, HEX);
-        s += " ";
-        uint8_t buf[9];
-        am.getbuf(buf);
-        s += String(buf[0], HEX);
-        s += " ";
-        s += String(buf[1], HEX);
-        s += " ";
-        s += String(buf[2], HEX);
-        s += " ";
-        s += String(buf[3], HEX);
-        s += " ";
-        s += String(buf[4], HEX);
-        s += " ";
-        s += String(buf[5], HEX);
-        s += " ";
-        s += String(buf[6], HEX);
-        s += " ";
-        s += String(buf[7], HEX);
-        ws.textAll(s);*/
       }
     }
 
@@ -911,24 +908,8 @@ void loop()
       bLastOn = bHeater;
     }
   }
-/*
-  static int lgTime;
-  if(millis() - lgTime >= 100)
-  {
-    lgTime = millis();
-    uint16_t newLight;
-    lightMedian.add( analogRead(0) );
-    lightMedian.getMedian(newLight);
-    if(newLight > light + 5) // light increased
-    {
-//      if(ee.bEnableOLED == false && displayOnTimer == 0)
-//        bStartDisplay = true;
-      displayOnTimer = 30;
-    }
-    light = newLight;
-  }
-*/
-  if(wifi.isCfg())
+
+  if(WiFi.status() != WL_CONNECTED)
     return;
  
   // Draw screen
@@ -1328,7 +1309,7 @@ void checkLimits()
   for(int i = 0; i < ee.schedCnt; i++)
   {
     if(bCF)
-      ee.schedule[i].setTemp = constrain(ee.schedule[i].setTemp, 155, 322); // sanity check (60~90)
+      ee.schedule[i].setTemp = constrain(ee.schedule[i].setTemp, 160, 320); // sanity check (16~32c)
     else
       ee.schedule[i].setTemp = constrain(ee.schedule[i].setTemp, 600, 900); // sanity check (60~90)
     ee.schedule[i].thresh = constrain(ee.schedule[i].thresh, 1, 100); // (50~80)
