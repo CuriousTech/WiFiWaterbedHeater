@@ -125,7 +125,7 @@ struct tempArr{
 #define LOG_CNT 98
 tempArr tempArray[LOG_CNT];
 
-void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+void jsonCallback(int16_t iName, int iValue, char *psValue);
 JsonParse jsonParse(jsonCallback);
 
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
@@ -179,7 +179,9 @@ String setJson() // settings
 
 void ePrint(const char *s)
 {
-  ws.textAll(String("print;") + s);
+  jsonString js("print");
+  js.Var("data", s);
+  ws.textAll(js.Close());
 }
 
 void parseParams(AsyncWebServerRequest *request)
@@ -340,7 +342,7 @@ void handleS(AsyncWebServerRequest *request) { // standard params, but no page
   request->send ( 200, "text/json", js.Close() );
 }
 
-const char *jsonListCmd[] = { "cmd",
+const char *jsonListCmd[] = {
   "key",
   "oled",
   "TZ",
@@ -368,115 +370,110 @@ const char *jsonListCmd[] = { "cmd",
 
 bool bKeyGood;
 
-void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
+void jsonCallback(int16_t iName, int iValue, char *psValue)
 {
   if(!bKeyGood && iName) return; // only allow for key
   char *p, *p2;
   static int beepPer = 1000;
   static int item = 0;
 
-  switch(iEvent)
+  switch(iName)
   {
-    case 0: // cmd
-      switch(iName)
-      {
-        case 0: // key
-          if(!strcmp(psValue, controlPassword)) // first item must be key
-            bKeyGood = true;
-          break;
-        case 1: // OLED
-          if( ee.bEnableOLED == false && iValue)
-            bStartDisplay = true;
-          ee.bEnableOLED = iValue ? true:false;
-          break;
-        case 2: // TZ
-          ee.tz = iValue;
-          utime.start();
-          break;
-        case 3: // avg
-          ee.bAvg = iValue;
-          break;
-        case 4: // cnt
-          ee.schedCnt = constrain(iValue, 1, 8);
-          ws.textAll(setJson()); // update all the entries
-          break;
-        case 5: // tadj
-          changeTemp(iValue, false);
-          ws.textAll(setJson()); // update all the entries
-          break;
-        case 6: // ppkw
-          ee.ppkwm[month()-1] = ee.ppkwh = iValue;
-          break;
-        case 7: // vaca
-          ee.bVaca = iValue;
-          break;
-        case 8: // vacatemp
-          if(bCF)
-            ee.vacaTemp = constrain( (int)(atof(psValue)*10), 100, 290); // 10-29C
-          else
-            ee.vacaTemp = constrain( (int)(atof(psValue)*10), 600, 840); // 60-84F
-          break;
-        case 9: // I
-          item = iValue;
-          break;
-        case 10: // N
-          strncpy(ee.schedule[item].name, psValue, sizeof(ee.schedule[0].name) );
-          break;
-        case 11: // S
-          p = strtok(psValue, ":");
-          p2 = strtok(NULL, "");
-          if(p && p2){
-            iValue *= 60;
-            iValue += atoi(p2);
-          }
-          ee.schedule[item].timeSch = iValue;
-          break;
-        case 12: // T
-          ee.schedule[item].setTemp = atof(psValue)*10;
-          break;
-        case 13: // H
-          ee.schedule[item].thresh = (int)(atof(psValue)*10);
-          checkLimits();      // constrain and check new values
-          checkSched(true);   // reconfigure to new schedule
-          break;
-       case 14: // beepF
-          toneCnt = 1;
-          toneFreq = iValue;
-          break;
-       case 15: // beepP (beep period)
-          tonePeriod = iValue;
-          toneCnt = 1;
-          break;
-       case 16: // vibe (vibe period)
-#ifdef VIBE
-          vibePeriod = iValue;
-          vibeCnt = 1;
-          pinMode(VIBE, OUTPUT);
-          digitalWrite(VIBE, LOW);
-#endif
-          break;
-        case 17: // watts
-          ee.watts = iValue;
-          break;
-        case 18: // dot displayOnTimer
-          if((displayOnTimer == 0) && (ee.bEnableOLED == false) && iValue)
-          {
-            bStartDisplay = true;
-          }
-          displayOnTimer = iValue;
-          break;
-        case 19: // save
-          updateAll(true);
-          break;
-        case 20: // aadj
-          changeTemp(iValue, true);
-          ws.textAll(setJson()); // update all the entries
-          break;
-        case 21: // eco
-          ee.bEco = iValue ? true:false;
-          setHeat();
-          break;
+    case 0: // key
+      if(!strcmp(psValue, controlPassword)) // first item must be key
+        bKeyGood = true;
+      break;
+    case 1: // OLED
+      if( ee.bEnableOLED == false && iValue)
+        bStartDisplay = true;
+      ee.bEnableOLED = iValue ? true:false;
+      break;
+    case 2: // TZ
+      ee.tz = iValue;
+      utime.start();
+      break;
+    case 3: // avg
+      ee.bAvg = iValue;
+      break;
+    case 4: // cnt
+      ee.schedCnt = constrain(iValue, 1, 8);
+      ws.textAll(setJson()); // update all the entries
+      break;
+    case 5: // tadj
+      changeTemp(iValue, false);
+      ws.textAll(setJson()); // update all the entries
+      break;
+    case 6: // ppkw
+      ee.ppkwm[month()-1] = ee.ppkwh = iValue;
+      break;
+    case 7: // vaca
+      ee.bVaca = iValue;
+      break;
+    case 8: // vacatemp
+      if(bCF)
+        ee.vacaTemp = constrain( (int)(atof(psValue)*10), 100, 290); // 10-29C
+      else
+        ee.vacaTemp = constrain( (int)(atof(psValue)*10), 600, 840); // 60-84F
+      break;
+    case 9: // I
+      item = iValue;
+      break;
+    case 10: // N
+      strncpy(ee.schedule[item].name, psValue, sizeof(ee.schedule[0].name) );
+      break;
+    case 11: // S
+      p = strtok(psValue, ":");
+      p2 = strtok(NULL, "");
+      if(p && p2){
+        iValue *= 60;
+        iValue += atoi(p2);
       }
+      ee.schedule[item].timeSch = iValue;
+      break;
+    case 12: // T
+      ee.schedule[item].setTemp = atof(psValue)*10;
+      break;
+    case 13: // H
+      ee.schedule[item].thresh = (int)(atof(psValue)*10);
+      checkLimits();      // constrain and check new values
+      checkSched(true);   // reconfigure to new schedule
+      break;
+   case 14: // beepF
+      toneCnt = 1;
+      toneFreq = iValue;
+      break;
+   case 15: // beepP (beep period)
+      tonePeriod = iValue;
+      toneCnt = 1;
+      break;
+   case 16: // vibe (vibe period)
+#ifdef VIBE
+      vibePeriod = iValue;
+      vibeCnt = 1;
+      pinMode(VIBE, OUTPUT);
+      digitalWrite(VIBE, LOW);
+#endif
+      break;
+    case 17: // watts
+      ee.watts = iValue;
+      break;
+    case 18: // dot displayOnTimer
+      if((displayOnTimer == 0) && (ee.bEnableOLED == false) && iValue)
+      {
+        bStartDisplay = true;
+      }
+      displayOnTimer = iValue;
+      break;
+    case 19: // save
+      updateAll(true);
+      break;
+    case 20: // aadj
+      changeTemp(iValue, true);
+      ws.textAll(setJson()); // update all the entries
+      break;
+    case 21: // eco
+      ee.bEco = iValue ? true:false;
+      setHeat();
       break;
   }
 }
@@ -484,7 +481,6 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len)
 {  //Handle WebSocket event
   static bool bRestarted = true;
-  String s;
 
   switch(type)
   {
@@ -492,12 +488,12 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
       if(bRestarted)
       {
         bRestarted = false;
-        client->text("alert;Restarted");
+        jsonString js("alert");
+        js.Var("data", "Restarted");
+        client->text(js.Close());
       }
-      s = dataJson();
-      client->text(s);
-      s = setJson();
-      client->text(s);
+      client->text(dataJson());
+      client->text(setJson());
       client->ping();
       break;
     case WS_EVT_DISCONNECT:    //client disconnected
@@ -513,11 +509,8 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
         if(info->opcode == WS_TEXT){
           data[len] = 0;
 
-          char *pCmd = strtok((char *)data, ";"); // assume format is "name;{json:x}"
-          char *pData = strtok(NULL, "");
-          if(pCmd == NULL || pData == NULL) break;
           bKeyGood = false; // for callback (all commands need a key)
-          jsonParse.process(pCmd, pData);
+          jsonParse.process((char*)data);
           ws.textAll(setJson()); // update the page settings
         }
       }
@@ -682,7 +675,7 @@ void setup()
     updateAll( true );
   });
 #endif
-  jsonParse.addList(jsonListCmd);
+  jsonParse.setList(jsonListCmd);
 
   if( ds.search(ds_addr) )
   {
@@ -1108,7 +1101,9 @@ void checkTemp()
   uint16_t raw = (data[1] << 8) | data[0];
 
   if(raw > 630 || raw < 200){ // first reading is always 1360 (0x550)
-    ws.textAll("alert;DS error");
+    jsonString js("alert");
+    js.Var("data", "DS error");
+    ws.textAll(js.Close());
     return;
   }
 
