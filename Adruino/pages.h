@@ -1,548 +1,545 @@
-const char index_page[] PROGMEM =
-   "<!DOCTYPE html><html lang=\"en\">\n"
-   "<head>\n"
-   "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n"
-   "<title>WiFi Waterbed Heater</title>\n"
-   "<style type=\"text/css\">\n"
-   "table{\n"
-   "border-radius: 2px;\n"
-   "box-shadow: 2px 2px 12px #000000;\n"
-   "background-image: -moz-linear-gradient(top, #f0f0f0, #506090);\n"
-   "background-image: -ms-linear-gradient(top, #f0f0f0, #506090);\n"
-   "background-image: -o-linear-gradient(top, #f0f0f0, #506090);\n"
-   "background-image: -webkit-linear-gradient(top, #f0f0f0, #506090);\n"
-   "background-image: linear-gradient(top, #f0f0f0, #506090);\n"
-   "background-clip: padding-box;\n"
-   "}\n"
-   "input{\n"
-   "border-radius: 5px;\n"
-   "box-shadow: 2px 2px 12px #000000;\n"
-   "background-image: -moz-linear-gradient(top, #dfffff, #505050);\n"
-   "background-image: -ms-linear-gradient(top, #dfffff, #505050);\n"
-   "background-image: -o-linear-gradient(top, #dfffff, #505050);\n"
-   "background-image: -webkit-linear-gradient(top, #dfffff, #505050);\n"
-   "background-image: linear-gradient(top, #dfffff, #505050);\n"
-   "background-clip: padding-box;\n"
-   "}\n"
-   "div{\n"
-   "border-radius: 5px;\n"
-   "box-shadow: 2px 2px 12px #000000;\n"
-   "background-image: -moz-linear-gradient(top, #df9f0f, #f050ff);\n"
-   "background-image: -ms-linear-gradient(top, #df9f0f, #f050ff);\n"
-   "background-image: -o-linear-gradient(top, #df9f0f, #f050ff);\n"
-   "background-image: -webkit-linear-gradient(top, #f0a040, #505050);\n"
-   "background-image: linear-gradient(top, #df9f0f, #f050ff);\n"
-   "background-clip: padding-box;\n"
-   "}\n"
-   "body{width:300px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}\n"
-   "</style>\n"
-   "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>\n"
-   "<script type=\"text/javascript\" src=\"data\"></script>\n"
-   "<script type=\"text/javascript\">\n"
-   "// src=\"http://192.168.31.86/data\"\n"
-   "a=document.all\n"
-   "oledon=0\n"
-   "avg=1\n"
-   "cnt=1\n"
-   "eco=0\n"
-   "cf='F'\n"
-   "function openSocket(){\n"
-   "ws=new WebSocket(\"ws://\"+window.location.host+\"/ws\")\n"
-   "//ws=new WebSocket(\"ws://192.168.31.158/ws\")\n"
-   "ws.onopen=function(evt) { }\n"
-   "ws.onclose=function(evt) { alert(\"Connection closed.\"); }\n"
-   "ws.onmessage=function(evt) {\n"
-   "console.log(evt.data)\n"
-   " lines=evt.data.split(';')\n"
-   " event=lines[0]\n"
-   " data=lines[1]\n"
-   " if(event=='state')\n"
-   " {\n"
-   "  d=JSON.parse(data)\n"
-   "  dt=new Date(d.t*1000)\n"
-   "  a.time.innerHTML=dt.toLocaleTimeString()\n"
-   "  waterTemp=+d.waterTemp\n"
-   "  a.temp.innerHTML=(d.on?\"<font color='red'><b>\":\"\")+waterTemp+\"&deg\"+cf+(d.on?\"</b></font>\":\"\")\n"
-   "  a.tgt.innerHTML=\"> \"+d.hiTemp+\"&deg\"+cf\n"
-   "  a.rt.innerHTML=+d.temp+'&deg'+cf\n"
-   "  a.rh.innerHTML=+d.rh+'%'\n"
-   "  a.eta.innerHTML='ETA '+t2hms(+d.eta)\n"
-   " }\n"
-   " else if(event=='set')\n"
-   " {\n"
-   "  d=JSON.parse(data)\n"
-   "  a.vt.value=+d.vt\n"
-   "  oledon=d.o\n"
-   "  a.OLED.value=oledon?'ON ':'OFF'\n"
-   "  avg=d.avg\n"
-   "  a.AVG.value=avg?'ON ':'OFF'\n"
-   "  a.tz.value=d.tz\n"
-   "  ppkw=d.ppkwh/1000\n"
-   "  a.K.value=ppkw\n"
-   "  a.vo.value=d.vo?'ON ':'OFF'\n"
-   "  a.eco.value=d.e?'ON ':'OFF'\n"
-   "  eco=d.e\n"
-   "  watts=d.w\n"
-   "  cnt=d.cnt\n"
-   "  idx=d.idx\n"
-   "  itms=d.item\n"
-   "  for(i=0;i<8;i++){\n"
-   "   item=document.getElementById('r'+i); item.setAttribute('style',i<cnt?'':'display:none')\n"
-   "   if(i==idx) item.setAttribute('style','background-color:red')\n"
-   "   document.getElementById('N'+i).value=itms[i][0]\n"
-   "   h=itms[i][1]/60\n"
-   "   m=itms[i][1]%60\n"
-   "   if(m<10) m='0'+m\n"
-   "   document.getElementById('S'+i).value=h+':'+m\n"
-   "   document.getElementById('T'+i).value=itms[i][2]\n"
-   "   document.getElementById('H'+i).value=itms[i][3]\n"
-   "   document.getElementById('N'+i).onchange=function(){onChangeSched(this)}\n"
-   "   document.getElementById('S'+i).onchange=function(){onChangeSched(this)}\n"
-   "   document.getElementById('T'+i).onchange=function(){onChangeSched(this)}\n"
-   "   document.getElementById('H'+i).onchange=function(){onChangeSched(this)}\n"
-   "  }\n"
-   "  a.inc.value=Math.min(8,cnt+1)\n"
-   "  a.dec.value=Math.max(1,cnt-1)\n"
-   "  draw_bars(d.ts,d.ppkwm)\n"
-   "  draw()\n"
-   " }\n"
-   " else if(event=='alert')\n"
-   " {\n"
-   "  alert(data)\n"
-   " }\n"
-   "}\n"
-   "}\n"
-   "function onChangeSched(ent)\n"
-   "{\n"
-   " id=ent.id.substr(0,1)\n"
-   " idx=ent.id.substr(1)\n"
-   " val=ent.value\n"
-   " if(id=='S')\n"
-   " {\n"
-   "tm=val.split(':')\n"
-   "val=(+tm[0]*60)+(+tm[1])\n"
-   " }\n"
-   " setVar('I',idx)\n"
-   " setVar(id,val)\n"
-   " draw()\n"
-   "}\n"
-   "function setVar(varName, value)\n"
-   "{\n"
-   " ws.send('cmd;{\"key\":\"'+a.myKey.value+'\",\"'+varName+'\":'+value+'}')\n"
-   "}\n"
-   "function oled(){\n"
-   "setVar('oled',oledon?0:1)\n"
-   "}\n"
-   "function setavg(){avg=!avg\n"
-   "setVar('avg',avg?1:0)\n"
-   "draw()\n"
-   "}\n"
-   "function setTZ(){\n"
-   "setVar('TZ',a.tz.value)}\n"
-   "function setTemp(n){\n"
-   "setVar('tadj',n)\n"
-   "}\n"
-   "function setAllTemp(n){\n"
-   "setVar('aadj',n)\n"
-   "}\n"
-   "function setEco(n){\n"
-   "eco=!eco\n"
-   "setVar('eco',eco?1:0)\n"
-   "}\n"
-   "function setVaca(){\n"
-   "setVar('vacatemp',a.vt.value)\n"
-   "setVar('vaca',(a.vo.value=='OFF')?true:false)\n"
-   "}\n"
-   "function setCnt(n){\n"
-   "cnt+=n\n"
-   "setVar('cnt',cnt)\n"
-   "}\n"
-   "function setPPK(){\n"
-   "setVar('ppkwh',(a.K.value*1000).toFixed())\n"
-   "}\n"
-   "\n"
-   "var x,y,llh=0,llh2=0\n"
-   "function draw(){\n"
-   "try {\n"
-   "  c2 = document.getElementById('canva')\n"
-   "  ctx = c2.getContext(\"2d\")\n"
-   "  ctx.fillStyle = \"#88f\" // bg\n"
-   "  ctx.fillRect(0,0,c2.width,c2.height)\n"
-   "\n"
-   "  ctx.font = \"bold 11px sans-serif\"\n"
-   "  ctx.lineWidth = 1\n"
-   "  getLoHi()\n"
-   "  ctx.strokeStyle = \"#000\"\n"
-   "  ctx.fillStyle = \"#000\"\n"
-   "  if(avg)\n"
-   "  {\n"
-   "ctx.beginPath()\n"
-   "m=c2.width-tm2x(itms[cnt-1][1])\n"
-   "r=m+tm2x(itms[0][1])\n"
-   "tt1=tween(+itms[cnt-1][2],+itms[0][2],m,r) // get y of midnight\n"
-   "th1=tween(+itms[cnt-1][2]-itms[cnt-1][3],+itms[0][2]-itms[0][3],m,r) // thresh\n"
-   "ctx.moveTo(0, t2y(tt1)) //1st point\n"
-   "for(i=0;i<cnt;i++){\n"
-   "x=tm2x(itms[i][1]) // time to x\n"
-   "  linePos(+itms[i][2])\n"
-   "}\n"
-   "i--;\n"
-   "  x = c2.width\n"
-   "  linePos(tt1) // temp at mid\n"
-   "  linePos(th1) // thresh tween\n"
-   "for(;i>=0;i--){\n"
-   "x=tm2x(itms[i][1])\n"
-   "  linePos(itms[i][2]-itms[i][3])\n"
-   "}\n"
-   "x=0\n"
-   "  linePos(th1) // thresh at midnight\n"
-   "ctx.closePath()\n"
-   "ctx.fillStyle = \"rgba(80,80,80,0.5)\" // thresholds\n"
-   "ctx.fill()\n"
-   "ctx.fillStyle = \"#000\" // temps\n"
-   "for(i=0;i<cnt;i++){\n"
-   "x=tm2x(itms[i][1]) // time to x\n"
-   "ctx.fillText(itms[i][2],x,t2y(+itms[i][2])-4)\n"
-   "}\n"
-   "  }\n"
-   "  else\n"
-   "  {\n"
-   "for(i=0;i<cnt;i++)\n"
-   "{\n"
-   "x=tm2x(itms[i][1])\n"
-   "y=t2y(itms[i][2]) // temp\n"
-   "y2=t2y(itms[i][2]-itms[i][3])-y // thresh\n"
-   "if(i==cnt-1) x2=c2.width-x\n"
-   "else x2=tm2x(itms[i+1][1])-x\n"
-   "ctx.fillStyle = \"rgba(80,80,80,0.4)\" // thresh\n"
-   "ctx.fillRect(x, y, x2, y2)\n"
-   "ctx.fillStyle = \"#000\" // temp\n"
-   "ctx.fillText(itms[i][2], x, y-2)\n"
-   "}\n"
-   "x0=tm2x(itms[0][1])\n"
-   "ctx.fillStyle = \"#666\"\n"
-   "ctx.fillRect(0, y, x0, y2) // rollover midnight\n"
-   "  }\n"
-   "\n"
-   "  ctx.fillStyle = \"#000\" // temps\n"
-   "  step=c2.width/cnt\n"
-   "  y = c2.height\n"
-   "  ctx.fillText(12,c2.width/2-6, y)//hrs\n"
-   "  ctx.fillText(6, c2.width/4-3, y)\n"
-   "  ctx.fillText(18,c2.width/2+c2.width/4-6, y)\n"
-   "  getLoHi()\n"
-   "  ctx.fillStyle = \"#337\" // temp scale\n"
-   "  ctx.fillText(hi,0,10)\n"
-   "  ctx.fillText(lo,0,c2.height)\n"
-   "  hl=hi-lo\n"
-   "  ctx.strokeStyle = \"rgba(13,13,13,0.1)\" // h-lines\n"
-   "  step=c2.height/hl\n"
-   "  ctx.beginPath()\n"
-   "  for(y=step,n=hi-1;y<c2.height;y+= step){  // vertical lines\n"
-   "    ctx.moveTo(14,y)\n"
-   "    ctx.lineTo(c2.width,y)\n"
-   "ctx.fillText(n--,0,y+3)\n"
-   "  }\n"
-   "  ctx.stroke()\n"
-   "  step = c2.width/24\n"
-   "  ctx.beginPath()\n"
-   "  for (x = step; x < c2.width; x += step){ // vertical lines\n"
-   "    ctx.moveTo(x,0)\n"
-   "    ctx.lineTo(x,c2.height)\n"
-   "  }\n"
-   "  ctx.stroke()\n"
-   "  ctx.beginPath()\n"
-   "  ctx.strokeStyle=\"#0D0\"\n"
-   "  brk=false\n"
-   "  for(i=0;i<tdata.length;i++) // rh\n"
-   "  {\n"
-   "if(tdata[i].t==0) continue\n"
-   "x=tm2x(tdata[i].tm)\n"
-   "y=c2.height-(tdata[i].rh/100*c2.height)\n"
-   "ctx.lineTo(x,y)\n"
-   "ctx.stroke()\n"
-   "ctx.beginPath()\n"
-   "if(tdata[i].s!=2)\n"
-   "ctx.moveTo(x,y)\n"
-   "  }\n"
-   "\n"
-   "  ctx.beginPath()\n"
-   "  ctx.strokeStyle=\"#834\"\n"
-   "  for(i=0;i<tdata.length;i++) // room temp\n"
-   "  {\n"
-   "if(tdata[i].t==0) continue\n"
-   "x=tm2x(tdata[i].tm)\n"
-   "y=t2y(tdata[i].rm)\n"
-   "ctx.lineTo(x,y)\n"
-   "ctx.stroke()\n"
-   "ctx.beginPath()\n"
-   "if(tdata[i].s!=2)\n"
-   "ctx.moveTo(x,y)\n"
-   "  }\n"
-   "\n"
-   "  ctx.beginPath()\n"
-   "  for(i=0;i<tdata.length;i++) // hist data\n"
-   "  {\n"
-   "if(tdata[i].t==0) continue;\n"
-   "x=tm2x(tdata[i].tm)\n"
-   "y=t2y(tdata[i].t)\n"
-   "ctx.lineTo(x,y)\n"
-   "ctx.stroke()\n"
-   "ctx.beginPath()\n"
-   "switch(+tdata[i].s)\n"
-   "{\n"
-   "case 0: ctx.strokeStyle=\"#00F\"; ctx.moveTo(x,y); break //off\n"
-   "case 1: ctx.strokeStyle=\"#F00\"; ctx.moveTo(x,y); break //on\n"
-   "case 2: break\n"
-   "}\n"
-   "  }\n"
-   "  dt=new Date()\n"
-   "  x=tm2x((dt.getHours()*60)+dt.getMinutes())\n"
-   "  ctx.beginPath()\n"
-   "  y=t2y(waterTemp)\n"
-   "  ctx.moveTo(x,y)\n"
-   "  ctx.lineTo(x-4,y+6)\n"
-   "  ctx.lineTo(x+4,y+6)\n"
-   "  ctx.closePath()\n"
-   "  ctx.fillStyle=\"#0f0\" // arrow\n"
-   "  ctx.fill()\n"
-   "  ctx.stroke()\n"
-   "}catch(err){}\n"
-   "}\n"
-   "function linePos(t)\n"
-   "{\n"
-   "ctx.lineTo(x,t2y(t))\n"
-   "}\n"
-   "function tm2x(t)\n"
-   "{\n"
-   "return t*c2.width/1440\n"
-   "}\n"
-   "function t2y(t)\n"
-   "{\n"
-   "return c2.height-((t-lo)/(hi-lo)*c2.height)\n"
-   "}\n"
-   "function tween(t1, t2, m, r)\n"
-   "{\n"
-   "t=(t2-t1)*(m*100/r)/100\n"
-   "t+=t1\n"
-   "return t.toFixed(1)\n"
-   "}\n"
-   "function getLoHi()\n"
-   "{\n"
-   "  lo=99\n"
-   "  hi=60\n"
-   "  for(i=0;i<cnt;i++){\n"
-   "if(itms[i][2]>hi) hi=itms[i][2]\n"
-   "if(itms[i][2]-itms[i][3]<lo) lo=itms[i][2]-itms[i][3]\n"
-   "  }\n"
-   "  for(i=0;i<tdata.length;i++)\n"
-   "  {\n"
-   "if(tdata[i].t>hi) hi=tdata[i].t\n"
-   "if(tdata[i].rm>hi) hi=tdata[i].rm\n"
-   "if(tdata[i].t>0&&tdata[i].t<lo) lo=tdata[i].t\n"
-   "if(tdata[i].rm>0&&tdata[i].rm<lo) lo=tdata[i].rm\n"
-   "  }\n"
-   "  lo=Math.floor(lo)\n"
-   "  hi=Math.ceil(hi)\n"
-   "}\n"
-   "function draw_bars(ar,pp)\n"
-   "{\n"
-   "    graph = $('#graph')\n"
-   "var c=document.getElementById('graph')\n"
-   "rect=c.getBoundingClientRect()\n"
-   "canvasX=rect.x\n"
-   "canvasY=rect.y\n"
-   "\n"
-   "    tipCanvas=document.getElementById(\"tip\")\n"
-   "    tipCtx=tipCanvas.getContext(\"2d\")\n"
-   "    tipDiv=document.getElementById(\"popup\")\n"
-   "\n"
-   "ctx=c.getContext(\"2d\")\n"
-   "ctx.fillStyle=\"#FFF\"\n"
-   "ctx.font=\"10px sans-serif\"\n"
-   "ctx.lineCap=\"round\"\n"
-   "\n"
-   "    dots=[]\n"
-   "    date=new Date()\n"
-   "ht=c.height\n"
-   "ctx.lineWidth=10\n"
-   "draw_scale(ar,pp,c.width-4,ht-2,2,1,date.getMonth())\n"
-   "\n"
-   "// request mousemove events\n"
-   "graph.mousemove(function(e){handleMouseMove(e);})\n"
-   "\n"
-   "// show tooltip when mouse hovers over dot\n"
-   "function handleMouseMove(e){\n"
-   "rect=c.getBoundingClientRect()\n"
-   "mouseX=e.clientX-rect.x\n"
-   "mouseY=e.clientY-rect.y\n"
-   "var hit = false\n"
-   "for(i=0;i<dots.length;i++){\n"
-   "dot=dots[i]\n"
-   "if(mouseX>=dot.x && mouseX<=dot.x2 && mouseY>=dot.y && mouseY<=dot.y2){\n"
-   "tipCtx.clearRect(0,0,tipCanvas.width,tipCanvas.height)\n"
-   "tipCtx.fillStyle=\"#000000\"\n"
-   "tipCtx.strokeStyle='#333'\n"
-   "tipCtx.font='italic 8pt sans-serif'\n"
-   "tipCtx.textAlign=\"left\"\n"
-   "tipCtx.fillText(dot.tip, 4,15)\n"
-   "tipCtx.fillText(dot.tip2,4,29)\n"
-   "tipCtx.fillText(dot.tip3,4,44)\n"
-   "popup=document.getElementById(\"popup\")\n"
-   "popup.style.top =(dot.y)+\"px\"\n"
-   "x=dot.x-60\n"
-   "if(x<10)x=10\n"
-   "popup.style.left=x+\"px\"\n"
-   "hit=true\n"
-   "}\n"
-   "}\n"
-   "if(!hit){popup.style.left=\"-1000px\"}\n"
-   "}\n"
-   "\n"
-   "function getMousePos(cDom, mEv){\n"
-   "rect = cDom.getBoundingClientRect();\n"
-   "return{\n"
-   " x: mEv.clientX-rect.left,\n"
-   " y: mEv.clientY-rect.top\n"
-   "}\n"
-   "}\n"
-   "}\n"
-   "\n"
-   "function draw_scale(ar,pp,w,h,o,p,ct)\n"
-   "{\n"
-   "ctx.fillStyle=\"#336\"\n"
-   "ctx.fillRect(2,o,w,h-3)\n"
-   "ctx.fillStyle=\"#FFF\"\n"
-   "max=0\n"
-   "tot=0\n"
-   "costTot=0\n"
-   "for(i=0;i<ar.length;i++)\n"
-   "{\n"
-   "if(ar[i]>max) max=ar[i]\n"
-   "tot+=ar[i]\n"
-   "}\n"
-   "ctx.textAlign=\"center\"\n"
-   "lw=ctx.lineWidth\n"
-   "clr='#55F'\n"
-   "mbh=0\n"
-   "bh=0\n"
-   "for(i=0;i<ar.length;i++)\n"
-   "{\n"
-   "x=i*(w/ar.length)+4+ctx.lineWidth\n"
-   "ctx.strokeStyle='#55F'\n"
-   "if(ar[i]){\n"
-   "    bh=ar[i]*(h-28)/max\n"
-   "    y=(o+h-20)-bh\n"
-   "ctx.beginPath()\n"
-   "    ctx.moveTo(x,o+h-22)\n"
-   "    ctx.lineTo(x,y)\n"
-   "ctx.stroke()\n"
-   "}\n"
-   "ctx.strokeStyle=\"#FFF\"\n"
-   "ctx.fillText(i+p,x,o+h-7)\n"
-   "\n"
-   "if(i==ct)\n"
-   "{\n"
-   "ctx.strokeStyle=\"#000\"\n"
-   "ctx.lineWidth=1\n"
-   "ctx.beginPath()\n"
-   "    ctx.moveTo(x+lw+1,o+h-2)\n"
-   "    ctx.lineTo(x+lw+1,o+1)\n"
-   "ctx.stroke()\n"
-   "ctx.lineWidth=lw\n"
-   "}\n"
-   "bh=+bh.toFixed()+5\n"
-   "x=+x.toFixed()\n"
-   "if(pp[i]==0) pp[i]=ppkw*1000\n"
-   "cost=+((pp[i]/1000)*ar[i]*(watts/3600000)).toFixed(2)\n"
-   "costTot+=cost\n"
-   "if(ar[i])\n"
-   "  dots.push({\n"
-   "x: x-lw/2,\n"
-   "y: (o+h-20)-bh,\n"
-   "y2: (o+h),\n"
-   "x2: x+lw/2,\n"
-   "tip: t2hms(ar[i]),\n"
-   "tip2: '$'+cost,\n"
-   "tip3: '@ $'+pp[i]/1000\n"
-   "})\n"
-   "}\n"
-   "ctx.fillText((tot*watts/3600000).toFixed(1)+' KWh',w/2,o+10)\n"
-   "ctx.fillText('$'+costTot.toFixed(2),w/2,o+22)\n"
-   "}\n"
-   "function t2hms(t)\n"
-   "{\n"
-   "s=t%60\n"
-   "t=Math.floor(t/60)\n"
-   "if(t==0) return s\n"
-   "if(s<10) s='0'+s\n"
-   "m=t%60\n"
-   "t=Math.floor(t/60)\n"
-   "if(t==0) return m+':'+s\n"
-   "if(m<10) m='0'+m\n"
-   "h=t%24\n"
-   "t=Math.floor(t/24)\n"
-   "if(t==0) return h+':'+m+':'+s\n"
-   "return t+'d '+h+':'+m+':'+s\n"
-   "}\n"
-   "</script>\n"
-   "<style type=\"text/css\">\n"
-   "#wrapper {\n"
-   "  width: 100%;\n"
-   "  height: 100px;\n"
-   "  position: relative;\n"
-   "}\n"
-   "#graph {\n"
-   "  width: 100%;\n"
-   "  height: 100%;\n"
-   "  position: relative;\n"
-   "}\n"
-   "#popup {\n"
-   "  position: absolute;\n"
-   "  top: -100px;\n"
-   "  left: -1000px;\n"
-   "  z-index: 10;\n"
-   "}\n"
-   "</style>\n"
-   "</head>\n"
-   "<body bgcolor=\"silver\" onload=\"{\n"
-   "key=localStorage.getItem('key')\n"
-   "if(key!=null) document.getElementById('myKey').value=key\n"
-   "openSocket()\n"
-   "}\">\n"
-   "<h3 align=\"center\">WiFi Waterbed Heater</h3>\n"
-   "<table align=right>\n"
-   "<tr><td align=center id=\"time\"></td><td align=center><div id=\"temp\"></div> </td><td align=center><div id=\"tgt\"></div></td></tr>\n"
-   "<tr><td align=center>Bedroom: </td><td align=center><div id=\"rt\"></div></td><td align=center><div id=\"rh\"></div> </td></tr>\n"
-   "<tr><td id=\"eta\"></td><td>TZ <input id='tz' type=text size=2 value='-5' onchange=\"{setTZ()}\"></td>\n"
-   "<td>Display:<input type=\"button\" value=\"ON \" id=\"OLED\" onClick=\"{oled()}\"></td></tr>\n"
-   "<tr><td colspan=2>Vacation <input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick=\"{setVaca()}\"> &nbsp &nbsp </td>\n"
-   "<td>Avg: <input type=\"button\" value=\"OFF\" id=\"AVG\" onClick=\"{setavg()}\"></td></tr>\n"
-   "<tr><td colspan=2></td>\n"
-   "<td>Eco: <input type=\"button\" value=\"OFF\" id=\"eco\" onClick=\"{setEco()}\"></td></tr>\n"
-   "<tr><td>Schedule <input id='inc' type='button' onclick=\"{setCnt(1)}\">Count <input id='dec' type='button' onclick=\"{setCnt(-1)}\"}></td>\n"
-   "<td> Temperature<br>Adjust</td>\n"
-   "<td><input type='button' value='Up' onclick=\"{setTemp(1)}\"> <input type='button' value='All Up' onclick=\"{setAllTemp(1)}\"><br><input type='button' value='Dn' onclick=\"{setTemp(-1)}\"> <input type='button' value='All Dn' onclick=\"{setAllTemp(-1)}\"></td></tr>\n"
-   "<tr><td align=\"left\"> &nbsp; &nbsp;  &nbsp; Name</td><td>Time &nbsp;&nbsp;</td><td>Temp &nbsp;Thresh</td></tr>\n"
-   "<tr><td colspan=3 id='r0' style=\"display:none\"><input id=N0 type=text size=12> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r1' style=\"display:none\"><input id=N1 type=text size=12> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r2' style=\"display:none\"><input id=N2 type=text size=12> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r3' style=\"display:none\"><input id=N3 type=text size=12> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r4' style=\"display:none\"><input id=N4 type=text size=12> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r5' style=\"display:none\"><input id=N5 type=text size=12> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r6' style=\"display:none\"><input id=N6 type=text size=12> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3 id='r7' style=\"display:none\"><input id=N7 type=text size=12> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2></td></tr>\n"
-   "<tr><td colspan=3><canvas id=\"canva\" width=\"300\" height=\"140\" style=\"border:1px dotted;float:center\" onclick=\"draw()\"></canvas></td></tr>\n"
-   "<tr><td colspan=3>\n"
-   "<div id=\"wrapper\">\n"
-   "<canvas id=\"graph\" width=\"300\" height=\"100\"></canvas>\n"
-   "<div id=\"popup\"><canvas id=\"tip\" width=\"70\" height=\"48\"></canvas></div>\n"
-   "</div>\n"
-   "</td></tr>\n"
-   "<tr><td colspan=2 align=\"left\">PPKWH $<input id='K' type=text size=2 value='0.1457' onchange=\"{setPPK()}\"> </td><td> <input id=\"myKey\" name=\"key\" type=text size=40 placeholder=\"password\" style=\"width: 100px\" onChange=\"{localStorage.setItem('key', key = document.all.myKey.value)}\"></td></tr>\n"
-   "</table>\n"
-   "</body>\n"
-   "</html>\n";
+const char index_page[] PROGMEM = R"rawliteral(
+<!DOCTYPE html><html lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>WiFi Waterbed Heater</title>
+<style type="text/css">
+table{
+border-radius: 2px;
+box-shadow: 2px 2px 12px #000000;
+background-image: -moz-linear-gradient(top, #f0f0f0, #506090);
+background-image: -ms-linear-gradient(top, #f0f0f0, #506090);
+background-image: -o-linear-gradient(top, #f0f0f0, #506090);
+background-image: -webkit-linear-gradient(top, #f0f0f0, #506090);
+background-image: linear-gradient(top, #f0f0f0, #506090);
+background-clip: padding-box;
+}
+input{
+border-radius: 5px;
+box-shadow: 2px 2px 12px #000000;
+background-image: -moz-linear-gradient(top, #dfffff, #505050);
+background-image: -ms-linear-gradient(top, #dfffff, #505050);
+background-image: -o-linear-gradient(top, #dfffff, #505050);
+background-image: -webkit-linear-gradient(top, #dfffff, #505050);
+background-image: linear-gradient(top, #dfffff, #505050);
+background-clip: padding-box;
+}
+div{
+border-radius: 5px;
+box-shadow: 2px 2px 12px #000000;
+background-image: -moz-linear-gradient(top, #df9f0f, #f050ff);
+background-image: -ms-linear-gradient(top, #df9f0f, #f050ff);
+background-image: -o-linear-gradient(top, #df9f0f, #f050ff);
+background-image: -webkit-linear-gradient(top, #f0a040, #505050);
+background-image: linear-gradient(top, #df9f0f, #f050ff);
+background-clip: padding-box;
+}
+body{width:300px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}
+</style>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.6.1/jquery.min.js" type="text/javascript" charset="utf-8"></script>
+<script type="text/javascript" src="data"></script>
+<script type="text/javascript">
+// src="http://192.168.31.86/data"
+a=document.all
+oledon=0
+avg=1
+cnt=1
+eco=0
+cf='F'
+function openSocket(){
+ws=new WebSocket("ws://"+window.location.host+"/ws")
+//ws=new WebSocket("ws://192.168.31.158/ws")
+ws.onopen=function(evt) { }
+ws.onclose=function(evt) { alert("Connection closed."); }
+ws.onmessage=function(evt) {
+  console.log(evt.data)
+ d=JSON.parse(evt.data)
+ if(d.cmd=='state')
+ {
+  dt=new Date(d.t*1000)
+  a.time.innerHTML=dt.toLocaleTimeString()
+  waterTemp=+d.waterTemp
+  a.temp.innerHTML=(d.on?"<font color='red'><b>":"")+waterTemp+"&deg"+cf+(d.on?"</b></font>":"")
+  a.tgt.innerHTML="> "+d.hiTemp+"&deg"+cf
+  a.rt.innerHTML=+d.temp+'&deg'+cf
+  a.rh.innerHTML=+d.rh+'%'
+  a.eta.innerHTML='ETA '+t2hms(+d.eta)
+ }
+ else if(d.cmd=='set')
+ {
+  a.vt.value=+d.vt
+  oledon=d.o
+  a.OLED.value=oledon?'ON ':'OFF'
+  avg=d.avg
+  a.AVG.value=avg?'ON ':'OFF'
+  a.tz.value=d.tz
+  ppkw=d.ppkwh/1000
+  a.K.value=ppkw
+  a.vo.value=d.vo?'ON ':'OFF'
+  a.eco.value=d.e?'ON ':'OFF'
+  eco=d.e
+  watts=d.w
+  cnt=d.cnt
+  idx=d.idx
+  itms=d.item
+  for(i=0;i<8;i++){
+   item=document.getElementById('r'+i); item.setAttribute('style',i<cnt?'':'display:none')
+   if(i==idx) item.setAttribute('style','background-color:red')
+   document.getElementById('N'+i).value=itms[i][0]
+   h=Math.floor(itms[i][1]/60)
+   m=itms[i][1]%60
+   if(m<10) m='0'+m
+   document.getElementById('S'+i).value=h+':'+m
+   document.getElementById('T'+i).value=itms[i][2]
+   document.getElementById('H'+i).value=itms[i][3]
+   document.getElementById('N'+i).onchange=function(){onChangeSched(this)}
+   document.getElementById('S'+i).onchange=function(){onChangeSched(this)}
+   document.getElementById('T'+i).onchange=function(){onChangeSched(this)}
+   document.getElementById('H'+i).onchange=function(){onChangeSched(this)}
+  }
+  a.inc.value=Math.min(8,cnt+1)
+  a.dec.value=Math.max(1,cnt-1)
+  draw_bars(d.ts,d.ppkwm)
+  draw()
+ }
+ else if(d.cmd=='alert')
+ {
+  alert(d.data)
+ }
+}
+}
+function onChangeSched(ent)
+{
+ id=ent.id.substr(0,1)
+ idx=ent.id.substr(1)
+ val=ent.value
+ if(id=='S')
+ {
+tm=val.split(':')
+val=(+tm[0]*60)+(+tm[1])
+ }
+ setVar('I',idx)
+ setVar(id,val)
+ draw()
+}
+function setVar(varName, value)
+{
+ ws.send('{"key":"'+a.myKey.value+'","'+varName+'":'+value+'}')
+}
+function oled(){
+setVar('oled',oledon?0:1)
+}
+function setavg(){avg=!avg
+setVar('avg',avg?1:0)
+draw()
+}
+function setTZ(){
+setVar('TZ',a.tz.value)}
+function setTemp(n){
+setVar('tadj',n)
+}
+function setAllTemp(n){
+setVar('aadj',n)
+}
+function setEco(n){
+eco=!eco
+setVar('eco',eco?1:0)
+}
+function setVaca(){
+setVar('vacatemp',a.vt.value)
+setVar('vaca',(a.vo.value=='OFF')?1:0)
+}
+function setCnt(n){
+cnt+=n
+setVar('cnt',cnt)
+}
+function setPPK(){
+setVar('ppkwh',(a.K.value*1000).toFixed())
+}
+
+var x,y,llh=0,llh2=0
+function draw(){
+try {
+  c2 = document.getElementById('canva')
+  ctx = c2.getContext("2d")
+  ctx.fillStyle = "#88f" // bg
+  ctx.fillRect(0,0,c2.width,c2.height)
+
+  ctx.font = "bold 11px sans-serif"
+  ctx.lineWidth = 1
+  getLoHi()
+  ctx.strokeStyle = "#000"
+  ctx.fillStyle = "#000"
+  if(avg)
+  {
+ctx.beginPath()
+m=c2.width-tm2x(itms[cnt-1][1])
+r=m+tm2x(itms[0][1])
+tt1=tween(+itms[cnt-1][2],+itms[0][2],m,r) // get y of midnight
+th1=tween(+itms[cnt-1][2]-itms[cnt-1][3],+itms[0][2]-itms[0][3],m,r) // thresh
+ctx.moveTo(0, t2y(tt1)) //1st point
+for(i=0;i<cnt;i++){
+x=tm2x(itms[i][1]) // time to x
+  linePos(+itms[i][2])
+}
+i--;
+  x = c2.width
+  linePos(tt1) // temp at mid
+  linePos(th1) // thresh tween
+for(;i>=0;i--){
+x=tm2x(itms[i][1])
+  linePos(itms[i][2]-itms[i][3])
+}
+x=0
+  linePos(th1) // thresh at midnight
+ctx.closePath()
+ctx.fillStyle = "rgba(80,80,80,0.5)" // thresholds
+ctx.fill()
+ctx.fillStyle = "#000" // temps
+for(i=0;i<cnt;i++){
+x=tm2x(itms[i][1]) // time to x
+ctx.fillText(itms[i][2],x,t2y(+itms[i][2])-4)
+}
+  }
+  else
+  {
+for(i=0;i<cnt;i++)
+{
+x=tm2x(itms[i][1])
+y=t2y(itms[i][2]) // temp
+y2=t2y(itms[i][2]-itms[i][3])-y // thresh
+if(i==cnt-1) x2=c2.width-x
+else x2=tm2x(itms[i+1][1])-x
+ctx.fillStyle = "rgba(80,80,80,0.4)" // thresh
+ctx.fillRect(x, y, x2, y2)
+ctx.fillStyle = "#000" // temp
+ctx.fillText(itms[i][2], x, y-2)
+}
+x0=tm2x(itms[0][1])
+ctx.fillStyle = "#666"
+ctx.fillRect(0, y, x0, y2) // rollover midnight
+  }
+
+  ctx.fillStyle = "#000" // temps
+  step=c2.width/cnt
+  y = c2.height
+  ctx.fillText(12,c2.width/2-6, y)//hrs
+  ctx.fillText(6, c2.width/4-3, y)
+  ctx.fillText(18,c2.width/2+c2.width/4-6, y)
+  getLoHi()
+  ctx.fillStyle = "#337" // temp scale
+  ctx.fillText(hi,0,10)
+  ctx.fillText(lo,0,c2.height)
+  hl=hi-lo
+  ctx.strokeStyle = "rgba(13,13,13,0.1)" // h-lines
+  step=c2.height/hl
+  ctx.beginPath()
+  for(y=step,n=hi-1;y<c2.height;y+= step){  // vertical lines
+    ctx.moveTo(14,y)
+    ctx.lineTo(c2.width,y)
+ctx.fillText(n--,0,y+3)
+  }
+  ctx.stroke()
+  step = c2.width/24
+  ctx.beginPath()
+  for (x = step; x < c2.width; x += step){ // vertical lines
+    ctx.moveTo(x,0)
+    ctx.lineTo(x,c2.height)
+  }
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.strokeStyle="#0D0"
+  brk=false
+  for(i=0;i<tdata.length;i++) // rh
+  {
+if(tdata[i].t==0) continue
+x=tm2x(tdata[i].tm)
+y=c2.height-(tdata[i].rh/100*c2.height)
+ctx.lineTo(x,y)
+ctx.stroke()
+ctx.beginPath()
+if(tdata[i].s!=2)
+ctx.moveTo(x,y)
+  }
+
+  ctx.beginPath()
+  ctx.strokeStyle="#834"
+  for(i=0;i<tdata.length;i++) // room temp
+  {
+if(tdata[i].t==0) continue
+x=tm2x(tdata[i].tm)
+y=t2y(tdata[i].rm)
+ctx.lineTo(x,y)
+ctx.stroke()
+ctx.beginPath()
+if(tdata[i].s!=2)
+ctx.moveTo(x,y)
+  }
+
+  ctx.beginPath()
+  for(i=0;i<tdata.length;i++) // hist data
+  {
+if(tdata[i].t==0) continue;
+x=tm2x(tdata[i].tm)
+y=t2y(tdata[i].t)
+ctx.lineTo(x,y)
+ctx.stroke()
+ctx.beginPath()
+switch(+tdata[i].s)
+{
+case 0: ctx.strokeStyle="#00F"; ctx.moveTo(x,y); break //off
+case 1: ctx.strokeStyle="#F00"; ctx.moveTo(x,y); break //on
+case 2: break
+}
+  }
+  dt=new Date()
+  x=tm2x((dt.getHours()*60)+dt.getMinutes())
+  ctx.beginPath()
+  y=t2y(waterTemp)
+  ctx.moveTo(x,y)
+  ctx.lineTo(x-4,y+6)
+  ctx.lineTo(x+4,y+6)
+  ctx.closePath()
+  ctx.fillStyle="#0f0" // arrow
+  ctx.fill()
+  ctx.stroke()
+}catch(err){}
+}
+function linePos(t)
+{
+ctx.lineTo(x,t2y(t))
+}
+function tm2x(t)
+{
+return t*c2.width/1440
+}
+function t2y(t)
+{
+return c2.height-((t-lo)/(hi-lo)*c2.height)
+}
+function tween(t1, t2, m, r)
+{
+t=(t2-t1)*(m*100/r)/100
+t+=t1
+return t.toFixed(1)
+}
+function getLoHi()
+{
+  lo=99
+  hi=60
+  for(i=0;i<cnt;i++){
+if(itms[i][2]>hi) hi=itms[i][2]
+if(itms[i][2]-itms[i][3]<lo) lo=itms[i][2]-itms[i][3]
+  }
+  for(i=0;i<tdata.length;i++)
+  {
+if(tdata[i].t>hi) hi=tdata[i].t
+if(tdata[i].rm>hi) hi=tdata[i].rm
+if(tdata[i].t>0&&tdata[i].t<lo) lo=tdata[i].t
+if(tdata[i].rm>0&&tdata[i].rm<lo) lo=tdata[i].rm
+  }
+  lo=Math.floor(lo)
+  hi=Math.ceil(hi)
+}
+function draw_bars(ar,pp)
+{
+    graph = $('#graph')
+var c=document.getElementById('graph')
+rect=c.getBoundingClientRect()
+canvasX=rect.x
+canvasY=rect.y
+
+    tipCanvas=document.getElementById("tip")
+    tipCtx=tipCanvas.getContext("2d")
+    tipDiv=document.getElementById("popup")
+
+ctx=c.getContext("2d")
+ctx.fillStyle="#FFF"
+ctx.font="10px sans-serif"
+ctx.lineCap="round"
+
+    dots=[]
+    date=new Date()
+ht=c.height
+ctx.lineWidth=10
+draw_scale(ar,pp,c.width-4,ht-2,2,1,date.getMonth())
+
+// request mousemove events
+graph.mousemove(function(e){handleMouseMove(e);})
+
+// show tooltip when mouse hovers over dot
+function handleMouseMove(e){
+rect=c.getBoundingClientRect()
+mouseX=e.clientX-rect.x
+mouseY=e.clientY-rect.y
+var hit = false
+for(i=0;i<dots.length;i++){
+dot=dots[i]
+if(mouseX>=dot.x && mouseX<=dot.x2 && mouseY>=dot.y && mouseY<=dot.y2){
+tipCtx.clearRect(0,0,tipCanvas.width,tipCanvas.height)
+tipCtx.fillStyle="#000000"
+tipCtx.strokeStyle='#333'
+tipCtx.font='italic 8pt sans-serif'
+tipCtx.textAlign="left"
+tipCtx.fillText(dot.tip, 4,15)
+tipCtx.fillText(dot.tip2,4,29)
+tipCtx.fillText(dot.tip3,4,44)
+popup=document.getElementById("popup")
+popup.style.top =(dot.y)+"px"
+x=dot.x-60
+if(x<10)x=10
+popup.style.left=x+"px"
+hit=true
+}
+}
+if(!hit){popup.style.left="-1000px"}
+}
+
+function getMousePos(cDom, mEv){
+rect = cDom.getBoundingClientRect();
+return{
+ x: mEv.clientX-rect.left,
+ y: mEv.clientY-rect.top
+}
+}
+}
+
+function draw_scale(ar,pp,w,h,o,p,ct)
+{
+ctx.fillStyle="#336"
+ctx.fillRect(2,o,w,h-3)
+ctx.fillStyle="#FFF"
+max=0
+tot=0
+costTot=0
+for(i=0;i<ar.length;i++)
+{
+if(ar[i]>max) max=ar[i]
+tot+=ar[i]
+}
+ctx.textAlign="center"
+lw=ctx.lineWidth
+clr='#55F'
+mbh=0
+bh=0
+for(i=0;i<ar.length;i++)
+{
+x=i*(w/ar.length)+4+ctx.lineWidth
+ctx.strokeStyle='#55F'
+if(ar[i]){
+    bh=ar[i]*(h-28)/max
+    y=(o+h-20)-bh
+ctx.beginPath()
+    ctx.moveTo(x,o+h-22)
+    ctx.lineTo(x,y)
+ctx.stroke()
+}
+ctx.strokeStyle="#FFF"
+ctx.fillText(i+p,x,o+h-7)
+
+if(i==ct)
+{
+ctx.strokeStyle="#000"
+ctx.lineWidth=1
+ctx.beginPath()
+    ctx.moveTo(x+lw+1,o+h-2)
+    ctx.lineTo(x+lw+1,o+1)
+ctx.stroke()
+ctx.lineWidth=lw
+}
+bh=+bh.toFixed()+5
+x=+x.toFixed()
+if(pp[i]==0) pp[i]=ppkw*1000
+cost=+((pp[i]/1000)*ar[i]*(watts/3600000)).toFixed(2)
+costTot+=cost
+if(ar[i])
+  dots.push({
+x: x-lw/2,
+y: (o+h-20)-bh,
+y2: (o+h),
+x2: x+lw/2,
+tip: t2hms(ar[i]),
+tip2: '$'+cost,
+tip3: '@ $'+pp[i]/1000
+})
+}
+ctx.fillText((tot*watts/3600000).toFixed(1)+' KWh',w/2,o+10)
+ctx.fillText('$'+costTot.toFixed(2),w/2,o+22)
+}
+function t2hms(t)
+{
+s=t%60
+t=Math.floor(t/60)
+if(t==0) return s
+if(s<10) s='0'+s
+m=t%60
+t=Math.floor(t/60)
+if(t==0) return m+':'+s
+if(m<10) m='0'+m
+h=t%24
+t=Math.floor(t/24)
+if(t==0) return h+':'+m+':'+s
+return t+'d '+h+':'+m+':'+s
+}
+</script>
+<style type="text/css">
+#wrapper {
+  width: 100%;
+  height: 100px;
+  position: relative;
+}
+#graph {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+#popup {
+  position: absolute;
+  top: -100px;
+  left: -1000px;
+  z-index: 10;
+}
+</style>
+</head>
+<body bgcolor="silver" onload="{
+key=localStorage.getItem('key')
+if(key!=null) document.getElementById('myKey').value=key
+openSocket()
+}">
+<h3 align="center">WiFi Waterbed Heater</h3>
+<table align=right>
+<tr><td align=center id="time"></td><td align=center><div id="temp"></div> </td><td align=center><div id="tgt"></div></td></tr>
+<tr><td align=center>Bedroom: </td><td align=center><div id="rt"></div></td><td align=center><div id="rh"></div> </td></tr>
+<tr><td id="eta"></td><td>TZ <input id='tz' type=text size=2 value='-5' onchange="{setTZ()}"></td>
+<td>Display:<input type="button" value="ON " id="OLED" onClick="{oled()}"></td></tr>
+<tr><td colspan=2>Vacation <input id='vt' type=text size=2 value='-10'><input type='button' id='vo' onclick="{setVaca()}"> &nbsp &nbsp </td>
+<td>Avg: <input type="button" value="OFF" id="AVG" onClick="{setavg()}"></td></tr>
+<tr><td colspan=2></td>
+<td>Eco: <input type="button" value="OFF" id="eco" onClick="{setEco()}"></td></tr>
+<tr><td>Schedule <input id='inc' type='button' onclick="{setCnt(1)}">Count <input id='dec' type='button' onclick="{setCnt(-1)}"}></td>
+<td> Temperature<br>Adjust</td>
+<td><input type='button' value='Up' onclick="{setTemp(1)}"> <input type='button' value='All Up' onclick="{setAllTemp(1)}"><br><input type='button' value='Dn' onclick="{setTemp(-1)}"> <input type='button' value='All Dn' onclick="{setAllTemp(-1)}"></td></tr>
+<tr><td align="left"> &nbsp; &nbsp;  &nbsp; Name</td><td>Time &nbsp;&nbsp;</td><td>Temp &nbsp;Thresh</td></tr>
+<tr><td colspan=3 id='r0' style="display:none"><input id=N0 type=text size=12> <input id=S0 type=text size=3> <input id=T0 type=text size=3> <input id=H0 type=text size=2></td></tr>
+<tr><td colspan=3 id='r1' style="display:none"><input id=N1 type=text size=12> <input id=S1 type=text size=3> <input id=T1 type=text size=3> <input id=H1 type=text size=2></td></tr>
+<tr><td colspan=3 id='r2' style="display:none"><input id=N2 type=text size=12> <input id=S2 type=text size=3> <input id=T2 type=text size=3> <input id=H2 type=text size=2></td></tr>
+<tr><td colspan=3 id='r3' style="display:none"><input id=N3 type=text size=12> <input id=S3 type=text size=3> <input id=T3 type=text size=3> <input id=H3 type=text size=2></td></tr>
+<tr><td colspan=3 id='r4' style="display:none"><input id=N4 type=text size=12> <input id=S4 type=text size=3> <input id=T4 type=text size=3> <input id=H4 type=text size=2></td></tr>
+<tr><td colspan=3 id='r5' style="display:none"><input id=N5 type=text size=12> <input id=S5 type=text size=3> <input id=T5 type=text size=3> <input id=H5 type=text size=2></td></tr>
+<tr><td colspan=3 id='r6' style="display:none"><input id=N6 type=text size=12> <input id=S6 type=text size=3> <input id=T6 type=text size=3> <input id=H6 type=text size=2></td></tr>
+<tr><td colspan=3 id='r7' style="display:none"><input id=N7 type=text size=12> <input id=S7 type=text size=3> <input id=T7 type=text size=3> <input id=H7 type=text size=2></td></tr>
+<tr><td colspan=3><canvas id="canva" width="300" height="140" style="border:1px dotted;float:center" onclick="draw()"></canvas></td></tr>
+<tr><td colspan=3>
+<div id="wrapper">
+<canvas id="graph" width="300" height="100"></canvas>
+<div id="popup"><canvas id="tip" width="70" height="48"></canvas></div>
+</div>
+</td></tr>
+<tr><td colspan=2 align="left">PPKWH $<input id='K' type=text size=2 value='0.1457' onchange="{setPPK()}"> </td><td> <input id="myKey" name="key" type=text size=40 placeholder="password" style="width: 100px" onChange="{localStorage.setItem('key', key = document.all.myKey.value)}"></td></tr>
+</table>
+</body>
+</html>
+)rawliteral";
 
 const uint8_t favicon[] PROGMEM = {
   0x1F, 0x8B, 0x08, 0x08, 0x70, 0xC9, 0xE2, 0x59, 0x04, 0x00, 0x66, 0x61, 0x76, 0x69, 0x63, 0x6F, 
